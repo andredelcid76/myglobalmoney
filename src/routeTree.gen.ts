@@ -16,6 +16,7 @@ import { Route as AppTransactionsRouteImport } from './routes/_app.transactions'
 import { Route as AppRecurrencesRouteImport } from './routes/_app.recurrences'
 import { Route as AppProjectionsRouteImport } from './routes/_app.projections'
 import { Route as AppImportRouteImport } from './routes/_app.import'
+import { Route as AppGoalsRouteImport } from './routes/_app.goals'
 import { Route as AppCategoriesRouteImport } from './routes/_app.categories'
 import { Route as AppBudgetsRouteImport } from './routes/_app.budgets'
 import { Route as AppAccountsRouteImport } from './routes/_app.accounts'
@@ -54,6 +55,11 @@ const AppImportRoute = AppImportRouteImport.update({
   path: '/import',
   getParentRoute: () => AppRoute,
 } as any)
+const AppGoalsRoute = AppGoalsRouteImport.update({
+  id: '/goals',
+  path: '/goals',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppCategoriesRoute = AppCategoriesRouteImport.update({
   id: '/categories',
   path: '/categories',
@@ -76,6 +82,7 @@ export interface FileRoutesByFullPath {
   '/accounts': typeof AppAccountsRoute
   '/budgets': typeof AppBudgetsRoute
   '/categories': typeof AppCategoriesRoute
+  '/goals': typeof AppGoalsRoute
   '/import': typeof AppImportRoute
   '/projections': typeof AppProjectionsRoute
   '/recurrences': typeof AppRecurrencesRoute
@@ -86,6 +93,7 @@ export interface FileRoutesByTo {
   '/accounts': typeof AppAccountsRoute
   '/budgets': typeof AppBudgetsRoute
   '/categories': typeof AppCategoriesRoute
+  '/goals': typeof AppGoalsRoute
   '/import': typeof AppImportRoute
   '/projections': typeof AppProjectionsRoute
   '/recurrences': typeof AppRecurrencesRoute
@@ -99,6 +107,7 @@ export interface FileRoutesById {
   '/_app/accounts': typeof AppAccountsRoute
   '/_app/budgets': typeof AppBudgetsRoute
   '/_app/categories': typeof AppCategoriesRoute
+  '/_app/goals': typeof AppGoalsRoute
   '/_app/import': typeof AppImportRoute
   '/_app/projections': typeof AppProjectionsRoute
   '/_app/recurrences': typeof AppRecurrencesRoute
@@ -113,6 +122,7 @@ export interface FileRouteTypes {
     | '/accounts'
     | '/budgets'
     | '/categories'
+    | '/goals'
     | '/import'
     | '/projections'
     | '/recurrences'
@@ -123,6 +133,7 @@ export interface FileRouteTypes {
     | '/accounts'
     | '/budgets'
     | '/categories'
+    | '/goals'
     | '/import'
     | '/projections'
     | '/recurrences'
@@ -135,6 +146,7 @@ export interface FileRouteTypes {
     | '/_app/accounts'
     | '/_app/budgets'
     | '/_app/categories'
+    | '/_app/goals'
     | '/_app/import'
     | '/_app/projections'
     | '/_app/recurrences'
@@ -198,6 +210,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppImportRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/goals': {
+      id: '/_app/goals'
+      path: '/goals'
+      fullPath: '/goals'
+      preLoaderRoute: typeof AppGoalsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/categories': {
       id: '/_app/categories'
       path: '/categories'
@@ -226,6 +245,7 @@ interface AppRouteChildren {
   AppAccountsRoute: typeof AppAccountsRoute
   AppBudgetsRoute: typeof AppBudgetsRoute
   AppCategoriesRoute: typeof AppCategoriesRoute
+  AppGoalsRoute: typeof AppGoalsRoute
   AppImportRoute: typeof AppImportRoute
   AppProjectionsRoute: typeof AppProjectionsRoute
   AppRecurrencesRoute: typeof AppRecurrencesRoute
@@ -237,6 +257,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppAccountsRoute: AppAccountsRoute,
   AppBudgetsRoute: AppBudgetsRoute,
   AppCategoriesRoute: AppCategoriesRoute,
+  AppGoalsRoute: AppGoalsRoute,
   AppImportRoute: AppImportRoute,
   AppProjectionsRoute: AppProjectionsRoute,
   AppRecurrencesRoute: AppRecurrencesRoute,

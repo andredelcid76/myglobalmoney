@@ -168,6 +168,57 @@ export type Database = {
         }
         Relationships: []
       }
+      goals: {
+        Row: {
+          account_id: string | null
+          color: string
+          created_at: string
+          current_amount_usd: number
+          icon: string | null
+          id: string
+          is_archived: boolean
+          monthly_contribution_usd: number
+          name: string
+          notes: string | null
+          target_amount_usd: number
+          target_date: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          account_id?: string | null
+          color?: string
+          created_at?: string
+          current_amount_usd?: number
+          icon?: string | null
+          id?: string
+          is_archived?: boolean
+          monthly_contribution_usd?: number
+          name: string
+          notes?: string | null
+          target_amount_usd: number
+          target_date?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          account_id?: string | null
+          color?: string
+          created_at?: string
+          current_amount_usd?: number
+          icon?: string | null
+          id?: string
+          is_archived?: boolean
+          monthly_contribution_usd?: number
+          name?: string
+          notes?: string | null
+          target_amount_usd?: number
+          target_date?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string
