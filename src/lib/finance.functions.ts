@@ -9,7 +9,7 @@ export const getOverview = createServerFn({ method: "POST" })
     const { supabase, userId } = context;
     const [accountsRes, txMonthRes, catsRes, allTxRes] = await Promise.all([
       supabase.from("accounts").select("*").eq("user_id", userId).eq("is_archived", false),
-      supabase.from("transactions").select("*").eq("user_id", userId).gte("date", data.monthStart).lte("date", data.monthEnd),
+      supabase.from("transactions").select("*").eq("user_id", userId).eq("is_transfer", false).gte("date", data.monthStart).lte("date", data.monthEnd),
       supabase.from("categories").select("*").eq("user_id", userId),
       supabase.from("transactions").select("account_id, amount, currency, amount_usd").eq("user_id", userId),
     ]);
@@ -157,7 +157,7 @@ export const listBudgets = createServerFn({ method: "POST" })
     const [budgets, categories, tx] = await Promise.all([
       context.supabase.from("budgets").select("*").eq("user_id", context.userId).eq("month", data.month),
       context.supabase.from("categories").select("*").eq("user_id", context.userId),
-      context.supabase.from("transactions").select("category_id, amount_usd").eq("user_id", context.userId)
+      context.supabase.from("transactions").select("category_id, amount_usd").eq("user_id", context.userId).eq("is_transfer", false)
         .gte("date", data.month).lte("date", endOfMonth(data.month)),
     ]);
     return { budgets: budgets.data ?? [], categories: categories.data ?? [], monthTx: tx.data ?? [] };
@@ -196,7 +196,7 @@ export const getProjections = createServerFn({ method: "POST" })
     const startHist = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 5, 1));
     const startStr = startHist.toISOString().slice(0, 10);
     const [txRes, accountsRes] = await Promise.all([
-      context.supabase.from("transactions").select("date, amount_usd").eq("user_id", context.userId).gte("date", startStr),
+      context.supabase.from("transactions").select("date, amount_usd").eq("user_id", context.userId).eq("is_transfer", false).gte("date", startStr),
       context.supabase.from("accounts").select("currency, initial_balance").eq("user_id", context.userId).eq("is_archived", false),
     ]);
     const tx = txRes.data ?? [];
