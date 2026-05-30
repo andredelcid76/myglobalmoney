@@ -13,7 +13,11 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app.index'
 import { Route as AppTransactionsRouteImport } from './routes/_app.transactions'
+import { Route as AppProjectionsRouteImport } from './routes/_app.projections'
 import { Route as AppImportRouteImport } from './routes/_app.import'
+import { Route as AppCategoriesRouteImport } from './routes/_app.categories'
+import { Route as AppBudgetsRouteImport } from './routes/_app.budgets'
+import { Route as AppAccountsRouteImport } from './routes/_app.accounts'
 
 const LoginRoute = LoginRouteImport.update({
   id: '/login',
@@ -34,21 +38,49 @@ const AppTransactionsRoute = AppTransactionsRouteImport.update({
   path: '/transactions',
   getParentRoute: () => AppRoute,
 } as any)
+const AppProjectionsRoute = AppProjectionsRouteImport.update({
+  id: '/projections',
+  path: '/projections',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppImportRoute = AppImportRouteImport.update({
   id: '/import',
   path: '/import',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppCategoriesRoute = AppCategoriesRouteImport.update({
+  id: '/categories',
+  path: '/categories',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppBudgetsRoute = AppBudgetsRouteImport.update({
+  id: '/budgets',
+  path: '/budgets',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAccountsRoute = AppAccountsRouteImport.update({
+  id: '/accounts',
+  path: '/accounts',
   getParentRoute: () => AppRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/login': typeof LoginRoute
+  '/accounts': typeof AppAccountsRoute
+  '/budgets': typeof AppBudgetsRoute
+  '/categories': typeof AppCategoriesRoute
   '/import': typeof AppImportRoute
+  '/projections': typeof AppProjectionsRoute
   '/transactions': typeof AppTransactionsRoute
 }
 export interface FileRoutesByTo {
   '/login': typeof LoginRoute
+  '/accounts': typeof AppAccountsRoute
+  '/budgets': typeof AppBudgetsRoute
+  '/categories': typeof AppCategoriesRoute
   '/import': typeof AppImportRoute
+  '/projections': typeof AppProjectionsRoute
   '/transactions': typeof AppTransactionsRoute
   '/': typeof AppIndexRoute
 }
@@ -56,20 +88,44 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
   '/login': typeof LoginRoute
+  '/_app/accounts': typeof AppAccountsRoute
+  '/_app/budgets': typeof AppBudgetsRoute
+  '/_app/categories': typeof AppCategoriesRoute
   '/_app/import': typeof AppImportRoute
+  '/_app/projections': typeof AppProjectionsRoute
   '/_app/transactions': typeof AppTransactionsRoute
   '/_app/': typeof AppIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/login' | '/import' | '/transactions'
+  fullPaths:
+    | '/'
+    | '/login'
+    | '/accounts'
+    | '/budgets'
+    | '/categories'
+    | '/import'
+    | '/projections'
+    | '/transactions'
   fileRoutesByTo: FileRoutesByTo
-  to: '/login' | '/import' | '/transactions' | '/'
+  to:
+    | '/login'
+    | '/accounts'
+    | '/budgets'
+    | '/categories'
+    | '/import'
+    | '/projections'
+    | '/transactions'
+    | '/'
   id:
     | '__root__'
     | '/_app'
     | '/login'
+    | '/_app/accounts'
+    | '/_app/budgets'
+    | '/_app/categories'
     | '/_app/import'
+    | '/_app/projections'
     | '/_app/transactions'
     | '/_app/'
   fileRoutesById: FileRoutesById
@@ -109,6 +165,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppTransactionsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/projections': {
+      id: '/_app/projections'
+      path: '/projections'
+      fullPath: '/projections'
+      preLoaderRoute: typeof AppProjectionsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/import': {
       id: '/_app/import'
       path: '/import'
@@ -116,17 +179,46 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppImportRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/categories': {
+      id: '/_app/categories'
+      path: '/categories'
+      fullPath: '/categories'
+      preLoaderRoute: typeof AppCategoriesRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/budgets': {
+      id: '/_app/budgets'
+      path: '/budgets'
+      fullPath: '/budgets'
+      preLoaderRoute: typeof AppBudgetsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/accounts': {
+      id: '/_app/accounts'
+      path: '/accounts'
+      fullPath: '/accounts'
+      preLoaderRoute: typeof AppAccountsRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
 interface AppRouteChildren {
+  AppAccountsRoute: typeof AppAccountsRoute
+  AppBudgetsRoute: typeof AppBudgetsRoute
+  AppCategoriesRoute: typeof AppCategoriesRoute
   AppImportRoute: typeof AppImportRoute
+  AppProjectionsRoute: typeof AppProjectionsRoute
   AppTransactionsRoute: typeof AppTransactionsRoute
   AppIndexRoute: typeof AppIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppAccountsRoute: AppAccountsRoute,
+  AppBudgetsRoute: AppBudgetsRoute,
+  AppCategoriesRoute: AppCategoriesRoute,
   AppImportRoute: AppImportRoute,
+  AppProjectionsRoute: AppProjectionsRoute,
   AppTransactionsRoute: AppTransactionsRoute,
   AppIndexRoute: AppIndexRoute,
 }
