@@ -211,6 +211,142 @@ function Legend() {
   );
 }
 
+type Row = {
+  id: string; name: string; color: string; isParent: boolean;
+  budgets: (number | null)[];
+  types: (BudgetType | null)[];
+  rollovers: boolean[];
+  spent: number[];
+};
+type Group = { parent: Row; children: Row[]; parentTotalBudget: number[] };
+
+type UpsertPayload = { category_id: string; month: string; amount_usd: number; budget_type?: BudgetType; rollover_enabled?: boolean };
+type DeletePayload = { category_id: string; month: string };
+type ApplyYearPayload = { category_id: string; amount_usd: number; budget_type: "fixed" | "flex"; rollover_enabled: boolean };
+
+function FragmentRows({
+  group, isOpen, onToggle, total, year, onUpsert, onDelete, onApplyYear,
+}: {
+  group: Group; isOpen: boolean; onToggle: () => void; total: number; year: number;
+  onUpsert: (v: UpsertPayload) => void;
+  onDelete: (v: DeletePayload) => void;
+  onApplyYear: (v: ApplyYearPayload) => void;
+}) {
+  const { parent, children, parentTotalBudget } = group;
+  // Aggregate spent for parent already includes children; aggregate budgets via parentTotalBudget.
+  // For the parent row cells, show aggregated total (read-only when there are children with budgets),
+  // but always allow editing the parent's own budget for that month.
+  return (
+    <>
+      <tr className="border-t border-border hover:bg-secondary/20 bg-secondary/5">
+        <td className="px-3 py-2 sticky left-0 bg-card z-10">
+          <div className="flex items-center justify-between gap-2">
+            <button onClick={onToggle} className="flex items-center gap-2 text-left">
+              {children.length > 0 ? (
+                isOpen ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRightIcon className="h-3.5 w-3.5 text-muted-foreground" />
+              ) : <span className="w-3.5" />}
+              <div className="h-3 w-3 rounded-full" style={{ background: parent.color }} />
+              <span className="font-semibold">{parent.name}</span>
+              {children.length > 0 && <span className="text-[10px] text-muted-foreground">({children.length})</span>}
+            </button>
+            <ApplyToYearPopover
+              onApply={(amount, type, rollover) =>
+                onApplyYear({ category_id: parent.id, amount_usd: amount, budget_type: type, rollover_enabled: rollover })
+              }
+            />
+          </div>
+        </td>
+        {Array.from({ length: 12 }).map((_, m) => {
+          const aggBudget = parentTotalBudget[m];
+          const spent = parent.spent[m];
+          const over = aggBudget > 0 && spent > aggBudget;
+          const ratio = aggBudget > 0 ? Math.min(spent / aggBudget, 1.5) : 0;
+          // Parent cell edits parent's own budget (separate from children's)
+          return (
+            <td key={m} className="px-1.5 py-1 align-top">
+              <CellEditor
+                value={parent.budgets[m]}
+                type={parent.types[m] ?? "flex"}
+                rollover={parent.rollovers[m]}
+                displayValue={aggBudget > 0 ? aggBudget : null}
+                onSave={(amt, t, ro) =>
+                  onUpsert({
+                    category_id: parent.id,
+                    month: monthKey(year, m),
+                    amount_usd: amt,
+                    budget_type: t,
+                    rollover_enabled: ro,
+                  })
+                }
+                onClear={() => onDelete({ category_id: parent.id, month: monthKey(year, m) })}
+              />
+              <div className="mt-1 h-1 rounded-full bg-secondary overflow-hidden">
+                <div className={`h-full ${over ? "bg-destructive" : "bg-primary"}`} style={{ width: `${ratio * 100}%` }} />
+              </div>
+              <div className={`mt-0.5 text-[10px] tabular-nums ${over ? "text-destructive" : "text-muted-foreground"}`}>
+                {spent > 0 ? formatCurrency(spent) : "—"}
+              </div>
+            </td>
+          );
+        })}
+        <td className="px-3 py-2 text-right tabular-nums font-semibold">{formatCurrency(total)}</td>
+      </tr>
+      {isOpen && children.map((ch) => {
+        const subTotal = ch.budgets.reduce((s, v) => s + (v ?? 0), 0);
+        return (
+          <tr key={ch.id} className="border-t border-border/50 hover:bg-secondary/10">
+            <td className="px-3 py-2 sticky left-0 bg-card z-10">
+              <div className="flex items-center justify-between gap-2 pl-7">
+                <div className="flex items-center gap-2">
+                  <div className="h-2 w-2 rounded-full opacity-70" style={{ background: ch.color }} />
+                  <span className="text-muted-foreground">{ch.name}</span>
+                </div>
+                <ApplyToYearPopover
+                  onApply={(amount, type, rollover) =>
+                    onApplyYear({ category_id: ch.id, amount_usd: amount, budget_type: type, rollover_enabled: rollover })
+                  }
+                />
+              </div>
+            </td>
+            {ch.budgets.map((b, m) => {
+              const spent = ch.spent[m];
+              const avail = b ?? 0;
+              const over = avail > 0 && spent > avail;
+              const ratio = avail > 0 ? Math.min(spent / avail, 1.5) : 0;
+              return (
+                <td key={m} className="px-1.5 py-1 align-top">
+                  <CellEditor
+                    value={b}
+                    type={ch.types[m] ?? "flex"}
+                    rollover={ch.rollovers[m]}
+                    onSave={(amt, t, ro) =>
+                      onUpsert({
+                        category_id: ch.id,
+                        month: monthKey(year, m),
+                        amount_usd: amt,
+                        budget_type: t,
+                        rollover_enabled: ro,
+                      })
+                    }
+                    onClear={() => onDelete({ category_id: ch.id, month: monthKey(year, m) })}
+                  />
+                  <div className="mt-1 h-1 rounded-full bg-secondary overflow-hidden">
+                    <div className={`h-full ${over ? "bg-destructive" : "bg-primary"}`} style={{ width: `${ratio * 100}%` }} />
+                  </div>
+                  <div className={`mt-0.5 text-[10px] tabular-nums ${over ? "text-destructive" : "text-muted-foreground"}`}>
+                    {spent > 0 ? formatCurrency(spent) : "—"}
+                  </div>
+                </td>
+              );
+            })}
+            <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(subTotal)}</td>
+          </tr>
+        );
+      })}
+    </>
+  );
+}
+
 function CellEditor({
   value, type, rollover, onSave, onClear,
 }: {
