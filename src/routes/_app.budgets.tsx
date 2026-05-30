@@ -1,116 +1,339 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { listBudgets, upsertBudget } from "@/lib/finance.functions";
-import { formatCurrency, startOfMonth, addMonths, monthLabel } from "@/lib/format";
-import { useState, useMemo } from "react";
+import { listBudgetsYear, upsertBudget, applyBudgetToYear, deleteBudget } from "@/lib/finance.functions";
+import { formatCurrency } from "@/lib/format";
+import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Copy, Trash2 } from "lucide-react";
+import {
+  Popover, PopoverContent, PopoverTrigger,
+} from "@/components/ui/popover";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 
 export const Route = createFileRoute("/_app/budgets")({ component: BudgetsPage });
 
-function BudgetsPage() {
-  const [month, setMonth] = useState<string>(startOfMonth());
-  const fetchBudgets = useServerFn(listBudgets);
-  const upsert = useServerFn(upsertBudget);
-  const qc = useQueryClient();
-  const { data } = useQuery({ queryKey: ["budgets", month], queryFn: () => fetchBudgets({ data: { month } }) });
+type BudgetType = "fixed" | "flex" | "annual";
+const MONTHS_PT = ["Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez"];
 
-  const save = useMutation({
-    mutationFn: (v: { category_id: string; amount_usd: number }) => upsert({ data: { ...v, month } }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["budgets", month] }),
+function monthKey(year: number, idx: number) {
+  return `${year}-${String(idx + 1).padStart(2, "0")}-01`;
+}
+
+function BudgetsPage() {
+  const [year, setYear] = useState(new Date().getFullYear());
+  const fetchYear = useServerFn(listBudgetsYear);
+  const upsert = useServerFn(upsertBudget);
+  const applyAll = useServerFn(applyBudgetToYear);
+  const del = useServerFn(deleteBudget);
+  const qc = useQueryClient();
+
+  const { data } = useQuery({
+    queryKey: ["budgets-year", year],
+    queryFn: () => fetchYear({ data: { year } }),
   });
 
-  const rows = useMemo(() => {
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["budgets-year", year] });
+
+  const upsertMut = useMutation({
+    mutationFn: (v: { category_id: string; month: string; amount_usd: number; budget_type?: BudgetType; rollover_enabled?: boolean }) => upsert({ data: v }),
+    onSuccess: invalidate,
+  });
+  const applyMut = useMutation({
+    mutationFn: (v: { category_id: string; amount_usd: number; budget_type: "fixed" | "flex"; rollover_enabled: boolean }) =>
+      applyAll({ data: { ...v, year } }),
+    onSuccess: invalidate,
+  });
+  const delMut = useMutation({
+    mutationFn: (v: { category_id: string; month: string }) => del({ data: v }),
+    onSuccess: invalidate,
+  });
+
+  const { rows, monthlyTotals, monthlySpent } = useMemo(() => {
     const cats = data?.categories ?? [];
+    const budgets = data?.budgets ?? [];
+    const tx = data?.tx ?? [];
     const parents = cats.filter((c: any) => !c.parent_id && !c.is_income && !c.is_transfer);
-    const spentByCat = new Map<string, number>();
-    for (const t of data?.monthTx ?? []) {
+
+    // spent[catId][monthIdx]
+    const spent: Record<string, number[]> = {};
+    for (const c of parents) spent[c.id] = Array(12).fill(0);
+    for (const t of tx) {
       const amt = Number(t.amount_usd);
       if (amt >= 0 || !t.category_id) continue;
-      // attribute subcategory's spend to its parent too
       const cat = cats.find((c: any) => c.id === t.category_id);
-      const targetIds = [t.category_id, cat?.parent_id].filter(Boolean) as string[];
-      for (const id of targetIds) spentByCat.set(id, (spentByCat.get(id) ?? 0) + -amt);
+      const targets = [t.category_id, cat?.parent_id].filter(Boolean) as string[];
+      const m = new Date((t.date as string) + "T00:00:00Z").getUTCMonth();
+      for (const id of targets) {
+        if (spent[id]) spent[id][m] += -amt;
+      }
     }
-    const budgetByCat = new Map<string, number>();
-    for (const b of data?.budgets ?? []) budgetByCat.set(b.category_id, Number(b.amount_usd));
-    return parents.map((c: any) => ({
-      id: c.id, name: c.name, color: c.color,
-      budget: budgetByCat.get(c.id) ?? 0,
-      spent: spentByCat.get(c.id) ?? 0,
-    }));
-  }, [data]);
 
-  const totalBudget = rows.reduce((s, r) => s + r.budget, 0);
-  const totalSpent = rows.reduce((s, r) => s + r.spent, 0);
+    // budget[catId][monthIdx] + meta
+    type Row = {
+      id: string; name: string; color: string;
+      budgets: (number | null)[];
+      types: (BudgetType | null)[];
+      rollovers: boolean[];
+      spent: number[];
+    };
+    const rows: Row[] = parents.map((c: any) => ({
+      id: c.id, name: c.name, color: c.color,
+      budgets: Array(12).fill(null),
+      types: Array(12).fill(null),
+      rollovers: Array(12).fill(false),
+      spent: spent[c.id] ?? Array(12).fill(0),
+    }));
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    for (const b of budgets) {
+      const r = byId.get(b.category_id);
+      if (!r) continue;
+      const m = new Date((b.month as string) + "T00:00:00Z").getUTCMonth();
+      r.budgets[m] = Number(b.amount_usd);
+      r.types[m] = (b.budget_type as BudgetType) ?? "flex";
+      r.rollovers[m] = !!b.rollover_enabled;
+    }
+
+    const monthlyTotals = Array(12).fill(0);
+    const monthlySpent = Array(12).fill(0);
+    for (const r of rows) {
+      for (let m = 0; m < 12; m++) {
+        monthlyTotals[m] += r.budgets[m] ?? 0;
+        monthlySpent[m] += r.spent[m];
+      }
+    }
+    return { rows, monthlyTotals, monthlySpent };
+  }, [data]);
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight">Orçamentos</h1>
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Orçamentos {year}</h1>
+          <p className="text-sm text-muted-foreground">Grid anual com tipos (fixo/variável/anual) e rollover</p>
+        </div>
         <div className="flex items-center gap-2">
-          <Button size="icon" variant="outline" onClick={() => setMonth(addMonths(month, -1))}><ChevronLeft className="h-4 w-4" /></Button>
-          <div className="min-w-[140px] text-center text-sm font-medium">{monthLabel(month)}</div>
-          <Button size="icon" variant="outline" onClick={() => setMonth(addMonths(month, 1))}><ChevronRight className="h-4 w-4" /></Button>
+          <Button size="icon" variant="outline" onClick={() => setYear(year - 1)}><ChevronLeft className="h-4 w-4" /></Button>
+          <div className="min-w-[80px] text-center text-sm font-medium">{year}</div>
+          <Button size="icon" variant="outline" onClick={() => setYear(year + 1)}><ChevronRight className="h-4 w-4" /></Button>
         </div>
       </div>
 
-      <div className="grid sm:grid-cols-3 gap-3">
-        <Card label="Orçado" value={formatCurrency(totalBudget)} />
-        <Card label="Gasto" value={formatCurrency(totalSpent)} />
-        <Card label="Restante" value={formatCurrency(totalBudget - totalSpent)} accent={totalSpent > totalBudget && totalBudget > 0 ? "text-destructive" : "text-emerald-400"} />
-      </div>
+      <Legend />
 
-      <div className="rounded-xl border border-border bg-card overflow-hidden">
-        <table className="w-full text-sm">
-          <thead className="bg-secondary/40 text-xs text-muted-foreground">
+      <div className="rounded-xl border border-border bg-card overflow-x-auto">
+        <table className="w-full text-xs min-w-[1100px]">
+          <thead className="bg-secondary/40 text-muted-foreground sticky top-0">
             <tr>
-              <th className="text-left px-4 py-2">Categoria</th>
-              <th className="text-right px-4 py-2">Orçado (USD)</th>
-              <th className="text-right px-4 py-2">Gasto</th>
-              <th className="text-left px-4 py-2 w-1/3">Progresso</th>
+              <th className="text-left px-3 py-2 sticky left-0 bg-secondary/40 z-10 min-w-[180px]">Categoria</th>
+              {MONTHS_PT.map((m, i) => (
+                <th key={m} className="text-center px-2 py-2 min-w-[80px]">{m}</th>
+              ))}
+              <th className="text-right px-3 py-2 min-w-[90px]">Total</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => {
-              const pct = r.budget > 0 ? Math.min((r.spent / r.budget) * 100, 150) : 0;
-              const over = r.budget > 0 && r.spent > r.budget;
+              const total = r.budgets.reduce((s: number, v) => s + (v ?? 0), 0);
+              // compute rollover availability per month for display
+              let carry = 0;
+              const available = r.budgets.map((b, m) => {
+                const t = r.types[m] ?? "flex";
+                const base = b ?? 0;
+                const avail = base + (r.rollovers[m] ? carry : 0);
+                if (r.rollovers[m]) {
+                  carry = avail - r.spent[m];
+                } else {
+                  carry = 0;
+                }
+                return { avail, type: t };
+              });
               return (
-                <tr key={r.id} className="border-t border-border">
-                  <td className="px-4 py-2">
-                    <div className="flex items-center gap-2">
-                      <div className="h-3 w-3 rounded-full" style={{ background: r.color }} /> {r.name}
+                <tr key={r.id} className="border-t border-border hover:bg-secondary/20">
+                  <td className="px-3 py-2 sticky left-0 bg-card z-10">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2">
+                        <div className="h-3 w-3 rounded-full" style={{ background: r.color }} />
+                        <span className="font-medium">{r.name}</span>
+                      </div>
+                      <ApplyToYearPopover
+                        onApply={(amount, type, rollover) =>
+                          applyMut.mutate({ category_id: r.id, amount_usd: amount, budget_type: type, rollover_enabled: rollover })
+                        }
+                      />
                     </div>
                   </td>
-                  <td className="px-4 py-2 text-right">
-                    <input
-                      type="number" step="10" defaultValue={r.budget}
-                      onBlur={(e) => { const v = Number(e.target.value); if (v !== r.budget) save.mutate({ category_id: r.id, amount_usd: v }); }}
-                      className="w-24 bg-input border border-border rounded px-2 py-1 text-right text-sm"
-                    />
-                  </td>
-                  <td className="px-4 py-2 text-right">{formatCurrency(r.spent)}</td>
-                  <td className="px-4 py-2">
-                    <div className="h-2 rounded-full bg-secondary overflow-hidden">
-                      <div className={`h-full ${over ? "bg-destructive" : "bg-primary"}`} style={{ width: `${pct}%` }} />
-                    </div>
-                  </td>
+                  {r.budgets.map((b, m) => {
+                    const spent = r.spent[m];
+                    const type = r.types[m] ?? "flex";
+                    const rollover = r.rollovers[m];
+                    const avail = available[m].avail;
+                    const over = avail > 0 && spent > avail;
+                    const ratio = avail > 0 ? Math.min(spent / avail, 1.5) : 0;
+                    return (
+                      <td key={m} className="px-1.5 py-1 align-top">
+                        <CellEditor
+                          value={b}
+                          type={type}
+                          rollover={rollover}
+                          onSave={(amt, t, ro) =>
+                            upsertMut.mutate({
+                              category_id: r.id,
+                              month: monthKey(year, m),
+                              amount_usd: amt,
+                              budget_type: t,
+                              rollover_enabled: ro,
+                            })
+                          }
+                          onClear={() => delMut.mutate({ category_id: r.id, month: monthKey(year, m) })}
+                        />
+                        <div className="mt-1 h-1 rounded-full bg-secondary overflow-hidden">
+                          <div className={`h-full ${over ? "bg-destructive" : "bg-primary"}`} style={{ width: `${ratio * 100}%` }} />
+                        </div>
+                        <div className={`mt-0.5 text-[10px] tabular-nums ${over ? "text-destructive" : "text-muted-foreground"}`}>
+                          {spent > 0 ? formatCurrency(spent) : "—"}
+                        </div>
+                      </td>
+                    );
+                  })}
+                  <td className="px-3 py-2 text-right tabular-nums font-medium">{formatCurrency(total)}</td>
                 </tr>
               );
             })}
           </tbody>
+          <tfoot className="bg-secondary/30 border-t border-border">
+            <tr>
+              <td className="px-3 py-2 sticky left-0 bg-secondary/30 z-10 font-semibold">Total mês</td>
+              {monthlyTotals.map((v: number, i: number) => (
+                <td key={i} className="px-2 py-2 text-center tabular-nums">
+                  <div className="font-medium">{formatCurrency(v)}</div>
+                  <div className="text-[10px] text-muted-foreground">gasto {formatCurrency(monthlySpent[i])}</div>
+                </td>
+              ))}
+              <td className="px-3 py-2 text-right tabular-nums font-semibold">
+                {formatCurrency(monthlyTotals.reduce((s: number, v: number) => s + v, 0))}
+              </td>
+            </tr>
+          </tfoot>
         </table>
       </div>
     </div>
   );
 }
 
-function Card({ label, value, accent }: { label: string; value: string; accent?: string }) {
+function Legend() {
   return (
-    <div className="rounded-xl border border-border bg-card p-4">
-      <div className="text-xs uppercase tracking-widest text-muted-foreground">{label}</div>
-      <div className={`mt-1 text-xl font-semibold ${accent ?? ""}`}>{value}</div>
+    <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+      <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-primary" /> Fixo: mesmo valor todo mês</span>
+      <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-amber-500" /> Variável: ajusta por mês</span>
+      <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" /> Anual: orçamento do ano</span>
+      <span className="inline-flex items-center gap-1">↻ Rollover: sobra/déficit passa pro próximo mês</span>
     </div>
+  );
+}
+
+function CellEditor({
+  value, type, rollover, onSave, onClear,
+}: {
+  value: number | null;
+  type: BudgetType;
+  rollover: boolean;
+  onSave: (amount: number, type: BudgetType, rollover: boolean) => void;
+  onClear: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [draft, setDraft] = useState<string>(value != null ? String(value) : "");
+  const [t, setT] = useState<BudgetType>(type);
+  const [ro, setRo] = useState(rollover);
+
+  const indicator = type === "fixed" ? "bg-primary" : type === "annual" ? "bg-emerald-500" : "bg-amber-500";
+
+  return (
+    <Popover open={open} onOpenChange={(o) => { setOpen(o); if (o) { setDraft(value != null ? String(value) : ""); setT(type); setRo(rollover); } }}>
+      <PopoverTrigger asChild>
+        <button className="w-full rounded border border-border bg-input px-2 py-1 text-right tabular-nums hover:border-primary/60 transition">
+          <div className="flex items-center justify-between gap-1">
+            <span className={`h-1.5 w-1.5 rounded-full ${value != null ? indicator : "bg-muted"}`} />
+            <span className={value != null ? "" : "text-muted-foreground"}>
+              {value != null ? formatCurrency(value) : "—"}
+            </span>
+            {rollover && <span className="text-[9px] text-muted-foreground">↻</span>}
+          </div>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-64 space-y-3" align="start">
+        <div className="space-y-1.5">
+          <Label className="text-xs">Valor (USD)</Label>
+          <input
+            type="number" step="10" value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            className="w-full bg-input border border-border rounded px-2 py-1.5 text-sm"
+            autoFocus
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label className="text-xs">Tipo</Label>
+          <Select value={t} onValueChange={(v) => setT(v as BudgetType)}>
+            <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="fixed">Mensal fixo</SelectItem>
+              <SelectItem value="flex">Mensal variável</SelectItem>
+              <SelectItem value="annual">Anual</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="flex items-center justify-between">
+          <Label htmlFor="rollover" className="text-xs">Rollover sobra/déficit</Label>
+          <Switch id="rollover" checked={ro} onCheckedChange={setRo} />
+        </div>
+        <div className="flex gap-2 pt-1">
+          <Button size="sm" className="flex-1" onClick={() => { const n = Number(draft); if (!isFinite(n) || n < 0) return; onSave(n, t, ro); setOpen(false); }}>
+            Salvar
+          </Button>
+          {value != null && (
+            <Button size="sm" variant="outline" onClick={() => { onClear(); setOpen(false); }}>
+              <Trash2 className="h-3.5 w-3.5" />
+            </Button>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function ApplyToYearPopover({ onApply }: { onApply: (amount: number, type: "fixed" | "flex", rollover: boolean) => void }) {
+  const [open, setOpen] = useState(false);
+  const [amt, setAmt] = useState("");
+  const [t, setT] = useState<"fixed" | "flex">("fixed");
+  const [ro, setRo] = useState(false);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button title="Aplicar a todos os meses do ano" className="text-muted-foreground hover:text-foreground p-1">
+          <Copy className="h-3.5 w-3.5" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-60 space-y-3">
+        <div className="text-xs font-medium">Aplicar ao ano inteiro</div>
+        <input type="number" step="10" placeholder="Valor mensal (USD)" value={amt} onChange={(e) => setAmt(e.target.value)}
+          className="w-full bg-input border border-border rounded px-2 py-1.5 text-sm" autoFocus />
+        <Select value={t} onValueChange={(v) => setT(v as "fixed" | "flex")}>
+          <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="fixed">Mensal fixo</SelectItem>
+            <SelectItem value="flex">Mensal variável</SelectItem>
+          </SelectContent>
+        </Select>
+        <div className="flex items-center justify-between">
+          <Label className="text-xs">Rollover</Label>
+          <Switch checked={ro} onCheckedChange={setRo} />
+        </div>
+        <Button size="sm" className="w-full" onClick={() => { const n = Number(amt); if (!isFinite(n) || n < 0) return; onApply(n, t, ro); setOpen(false); }}>
+          Aplicar aos 12 meses
+        </Button>
+      </PopoverContent>
+    </Popover>
   );
 }
