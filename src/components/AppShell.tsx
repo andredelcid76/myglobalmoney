@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
-import { LayoutDashboard, Receipt, PiggyBank, FolderTree, Wallet, Upload, TrendingUp, LogOut, DollarSign } from "lucide-react";
+import { LayoutDashboard, Receipt, PiggyBank, FolderTree, Wallet, Upload, TrendingUp, LogOut, DollarSign, Repeat } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -10,6 +10,7 @@ const nav = [
   { to: "/", label: "Dashboard", icon: LayoutDashboard, exact: true },
   { to: "/transactions", label: "Transações", icon: Receipt },
   { to: "/budgets", label: "Orçamentos", icon: PiggyBank },
+  { to: "/recurrences", label: "Recorrências", icon: Repeat },
   { to: "/projections", label: "Projeções", icon: TrendingUp },
   { to: "/categories", label: "Categorias", icon: FolderTree },
   { to: "/accounts", label: "Contas", icon: Wallet },
