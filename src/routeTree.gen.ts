@@ -13,6 +13,7 @@ import { Route as LoginRouteImport } from './routes/login'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as AppIndexRouteImport } from './routes/_app.index'
 import { Route as AppTransactionsRouteImport } from './routes/_app.transactions'
+import { Route as AppRecurrencesRouteImport } from './routes/_app.recurrences'
 import { Route as AppProjectionsRouteImport } from './routes/_app.projections'
 import { Route as AppImportRouteImport } from './routes/_app.import'
 import { Route as AppCategoriesRouteImport } from './routes/_app.categories'
@@ -36,6 +37,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
 const AppTransactionsRoute = AppTransactionsRouteImport.update({
   id: '/transactions',
   path: '/transactions',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppRecurrencesRoute = AppRecurrencesRouteImport.update({
+  id: '/recurrences',
+  path: '/recurrences',
   getParentRoute: () => AppRoute,
 } as any)
 const AppProjectionsRoute = AppProjectionsRouteImport.update({
@@ -72,6 +78,7 @@ export interface FileRoutesByFullPath {
   '/categories': typeof AppCategoriesRoute
   '/import': typeof AppImportRoute
   '/projections': typeof AppProjectionsRoute
+  '/recurrences': typeof AppRecurrencesRoute
   '/transactions': typeof AppTransactionsRoute
 }
 export interface FileRoutesByTo {
@@ -81,6 +88,7 @@ export interface FileRoutesByTo {
   '/categories': typeof AppCategoriesRoute
   '/import': typeof AppImportRoute
   '/projections': typeof AppProjectionsRoute
+  '/recurrences': typeof AppRecurrencesRoute
   '/transactions': typeof AppTransactionsRoute
   '/': typeof AppIndexRoute
 }
@@ -93,6 +101,7 @@ export interface FileRoutesById {
   '/_app/categories': typeof AppCategoriesRoute
   '/_app/import': typeof AppImportRoute
   '/_app/projections': typeof AppProjectionsRoute
+  '/_app/recurrences': typeof AppRecurrencesRoute
   '/_app/transactions': typeof AppTransactionsRoute
   '/_app/': typeof AppIndexRoute
 }
@@ -106,6 +115,7 @@ export interface FileRouteTypes {
     | '/categories'
     | '/import'
     | '/projections'
+    | '/recurrences'
     | '/transactions'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -115,6 +125,7 @@ export interface FileRouteTypes {
     | '/categories'
     | '/import'
     | '/projections'
+    | '/recurrences'
     | '/transactions'
     | '/'
   id:
@@ -126,6 +137,7 @@ export interface FileRouteTypes {
     | '/_app/categories'
     | '/_app/import'
     | '/_app/projections'
+    | '/_app/recurrences'
     | '/_app/transactions'
     | '/_app/'
   fileRoutesById: FileRoutesById
@@ -163,6 +175,13 @@ declare module '@tanstack/react-router' {
       path: '/transactions'
       fullPath: '/transactions'
       preLoaderRoute: typeof AppTransactionsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/recurrences': {
+      id: '/_app/recurrences'
+      path: '/recurrences'
+      fullPath: '/recurrences'
+      preLoaderRoute: typeof AppRecurrencesRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/projections': {
@@ -209,6 +228,7 @@ interface AppRouteChildren {
   AppCategoriesRoute: typeof AppCategoriesRoute
   AppImportRoute: typeof AppImportRoute
   AppProjectionsRoute: typeof AppProjectionsRoute
+  AppRecurrencesRoute: typeof AppRecurrencesRoute
   AppTransactionsRoute: typeof AppTransactionsRoute
   AppIndexRoute: typeof AppIndexRoute
 }
@@ -219,6 +239,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppCategoriesRoute: AppCategoriesRoute,
   AppImportRoute: AppImportRoute,
   AppProjectionsRoute: AppProjectionsRoute,
+  AppRecurrencesRoute: AppRecurrencesRoute,
   AppTransactionsRoute: AppTransactionsRoute,
   AppIndexRoute: AppIndexRoute,
 }
