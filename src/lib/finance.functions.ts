@@ -169,6 +169,8 @@ export const upsertBudget = createServerFn({ method: "POST" })
     category_id: z.string().uuid(),
     month: z.string(),
     amount_usd: z.number().min(0),
+    budget_type: z.enum(["fixed", "flex", "annual"]).optional(),
+    rollover_enabled: z.boolean().optional(),
   }).parse(d))
   .handler(async ({ data, context }) => {
     const { data: existing } = await context.supabase.from("budgets").select("id").eq("user_id", context.userId)
@@ -179,6 +181,56 @@ export const upsertBudget = createServerFn({ method: "POST" })
       : await context.supabase.from("budgets").insert(payload);
     if (error) throw new Error(error.message);
     return { ok: true };
+  });
+
+export const deleteBudget = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ category_id: z.string().uuid(), month: z.string() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase.from("budgets").delete()
+      .eq("user_id", context.userId).eq("category_id", data.category_id).eq("month", data.month);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const applyBudgetToYear = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({
+    category_id: z.string().uuid(),
+    year: z.number().int(),
+    amount_usd: z.number().min(0),
+    budget_type: z.enum(["fixed", "flex"]).default("fixed"),
+    rollover_enabled: z.boolean().default(false),
+  }).parse(d))
+  .handler(async ({ data, context }) => {
+    const rows = Array.from({ length: 12 }, (_, i) => ({
+      user_id: context.userId,
+      category_id: data.category_id,
+      month: `${data.year}-${String(i + 1).padStart(2, "0")}-01`,
+      amount_usd: data.amount_usd,
+      budget_type: data.budget_type,
+      rollover_enabled: data.rollover_enabled,
+    }));
+    const { error } = await context.supabase.from("budgets").upsert(rows, { onConflict: "user_id,category_id,month" });
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const listBudgetsYear = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ year: z.number().int() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const start = `${data.year}-01-01`;
+    const end = `${data.year}-12-31`;
+    const [budgets, categories, tx] = await Promise.all([
+      context.supabase.from("budgets").select("*").eq("user_id", context.userId)
+        .gte("month", start).lte("month", end),
+      context.supabase.from("categories").select("*").eq("user_id", context.userId),
+      context.supabase.from("transactions").select("category_id, amount_usd, date")
+        .eq("user_id", context.userId).eq("is_transfer", false)
+        .gte("date", start).lte("date", end),
+    ]);
+    return { budgets: budgets.data ?? [], categories: categories.data ?? [], tx: tx.data ?? [] };
   });
 
 // ---------- Projections ----------
