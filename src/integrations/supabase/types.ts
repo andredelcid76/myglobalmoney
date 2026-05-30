@@ -186,6 +186,63 @@ export type Database = {
         }
         Relationships: []
       }
+      recurrences: {
+        Row: {
+          account_id: string | null
+          amount_usd: number
+          cadence: string
+          category_id: string | null
+          created_at: string
+          day_of_month: number | null
+          id: string
+          is_active: boolean
+          is_income: boolean
+          merchant_pattern: string | null
+          name: string
+          next_date: string
+          notes: string | null
+          source: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          account_id?: string | null
+          amount_usd: number
+          cadence: string
+          category_id?: string | null
+          created_at?: string
+          day_of_month?: number | null
+          id?: string
+          is_active?: boolean
+          is_income?: boolean
+          merchant_pattern?: string | null
+          name: string
+          next_date: string
+          notes?: string | null
+          source?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          account_id?: string | null
+          amount_usd?: number
+          cadence?: string
+          category_id?: string | null
+          created_at?: string
+          day_of_month?: number | null
+          id?: string
+          is_active?: boolean
+          is_income?: boolean
+          merchant_pattern?: string | null
+          name?: string
+          next_date?: string
+          notes?: string | null
+          source?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       transactions: {
         Row: {
           account_id: string
