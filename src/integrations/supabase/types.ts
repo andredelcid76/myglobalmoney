@@ -14,7 +14,256 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      accounts: {
+        Row: {
+          color: string | null
+          created_at: string
+          currency: string
+          id: string
+          initial_balance: number
+          institution: string | null
+          is_archived: boolean
+          name: string
+          type: Database["public"]["Enums"]["account_type"]
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          color?: string | null
+          created_at?: string
+          currency?: string
+          id?: string
+          initial_balance?: number
+          institution?: string | null
+          is_archived?: boolean
+          name: string
+          type?: Database["public"]["Enums"]["account_type"]
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          color?: string | null
+          created_at?: string
+          currency?: string
+          id?: string
+          initial_balance?: number
+          institution?: string | null
+          is_archived?: boolean
+          name?: string
+          type?: Database["public"]["Enums"]["account_type"]
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      budgets: {
+        Row: {
+          amount_usd: number
+          category_id: string
+          created_at: string
+          id: string
+          month: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          amount_usd: number
+          category_id: string
+          created_at?: string
+          id?: string
+          month: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          amount_usd?: number
+          category_id?: string
+          created_at?: string
+          id?: string
+          month?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "budgets_category_id_fkey"
+            columns: ["category_id"]
+            isOneToOne: false
+            referencedRelation: "categories"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      categories: {
+        Row: {
+          color: string | null
+          created_at: string
+          icon: string | null
+          id: string
+          is_income: boolean
+          is_transfer: boolean
+          name: string
+          parent_id: string | null
+          user_id: string
+        }
+        Insert: {
+          color?: string | null
+          created_at?: string
+          icon?: string | null
+          id?: string
+          is_income?: boolean
+          is_transfer?: boolean
+          name: string
+          parent_id?: string | null
+          user_id: string
+        }
+        Update: {
+          color?: string | null
+          created_at?: string
+          icon?: string | null
+          id?: string
+          is_income?: boolean
+          is_transfer?: boolean
+          name?: string
+          parent_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "categories_parent_id_fkey"
+            columns: ["parent_id"]
+            isOneToOne: false
+            referencedRelation: "categories"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      exchange_rates: {
+        Row: {
+          base: string
+          created_at: string
+          date: string
+          quote: string
+          rate: number
+        }
+        Insert: {
+          base: string
+          created_at?: string
+          date: string
+          quote: string
+          rate: number
+        }
+        Update: {
+          base?: string
+          created_at?: string
+          date?: string
+          quote?: string
+          rate?: number
+        }
+        Relationships: []
+      }
+      profiles: {
+        Row: {
+          created_at: string
+          default_currency: string
+          display_name: string | null
+          id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          default_currency?: string
+          display_name?: string | null
+          id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          default_currency?: string
+          display_name?: string | null
+          id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      transactions: {
+        Row: {
+          account_id: string
+          amount: number
+          amount_usd: number
+          category_id: string | null
+          created_at: string
+          currency: string
+          date: string
+          exchange_rate: number | null
+          external_id: string | null
+          id: string
+          is_pending: boolean
+          is_transfer: boolean
+          merchant: string
+          notes: string | null
+          original_statement: string | null
+          tags: string[] | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          account_id: string
+          amount: number
+          amount_usd: number
+          category_id?: string | null
+          created_at?: string
+          currency?: string
+          date: string
+          exchange_rate?: number | null
+          external_id?: string | null
+          id?: string
+          is_pending?: boolean
+          is_transfer?: boolean
+          merchant: string
+          notes?: string | null
+          original_statement?: string | null
+          tags?: string[] | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          account_id?: string
+          amount?: number
+          amount_usd?: number
+          category_id?: string | null
+          created_at?: string
+          currency?: string
+          date?: string
+          exchange_rate?: number | null
+          external_id?: string | null
+          id?: string
+          is_pending?: boolean
+          is_transfer?: boolean
+          merchant?: string
+          notes?: string | null
+          original_statement?: string | null
+          tags?: string[] | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "transactions_account_id_fkey"
+            columns: ["account_id"]
+            isOneToOne: false
+            referencedRelation: "accounts"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "transactions_category_id_fkey"
+            columns: ["category_id"]
+            isOneToOne: false
+            referencedRelation: "categories"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
@@ -23,7 +272,13 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      [_ in never]: never
+      account_type:
+        | "checking"
+        | "savings"
+        | "credit_card"
+        | "cash"
+        | "investment"
+        | "other"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +405,15 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      account_type: [
+        "checking",
+        "savings",
+        "credit_card",
+        "cash",
+        "investment",
+        "other",
+      ],
+    },
   },
 } as const
