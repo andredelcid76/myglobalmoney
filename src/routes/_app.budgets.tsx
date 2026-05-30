@@ -5,7 +5,7 @@ import { listBudgetsYear, upsertBudget, applyBudgetToYear, deleteBudget } from "
 import { formatCurrency } from "@/lib/format";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, ChevronRight, Copy, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, ChevronRightIcon, Copy, Trash2 } from "lucide-react";
 import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
@@ -51,15 +51,25 @@ function BudgetsPage() {
     onSuccess: invalidate,
   });
 
-  const { rows, monthlyTotals, monthlySpent } = useMemo(() => {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  const { groups, monthlyTotals, monthlySpent } = useMemo(() => {
     const cats = data?.categories ?? [];
     const budgets = data?.budgets ?? [];
     const tx = data?.tx ?? [];
     const parents = cats.filter((c: any) => !c.parent_id && !c.is_income && !c.is_transfer);
+    const childrenByParent = new Map<string, any[]>();
+    for (const c of cats) {
+      if (c.parent_id) {
+        const arr = childrenByParent.get(c.parent_id) ?? [];
+        arr.push(c);
+        childrenByParent.set(c.parent_id, arr);
+      }
+    }
 
-    // spent[catId][monthIdx]
+    // spent[catId][monthIdx] — sub gets its own; parent gets aggregate of self + children
     const spent: Record<string, number[]> = {};
-    for (const c of parents) spent[c.id] = Array(12).fill(0);
+    for (const c of cats) spent[c.id] = Array(12).fill(0);
     for (const t of tx) {
       const amt = Number(t.amount_usd);
       if (amt >= 0 || !t.category_id) continue;
@@ -71,40 +81,57 @@ function BudgetsPage() {
       }
     }
 
-    // budget[catId][monthIdx] + meta
     type Row = {
-      id: string; name: string; color: string;
+      id: string; name: string; color: string; isParent: boolean;
       budgets: (number | null)[];
       types: (BudgetType | null)[];
       rollovers: boolean[];
       spent: number[];
     };
-    const rows: Row[] = parents.map((c: any) => ({
-      id: c.id, name: c.name, color: c.color,
+    const mkRow = (c: any, isParent: boolean): Row => ({
+      id: c.id, name: c.name, color: c.color, isParent,
       budgets: Array(12).fill(null),
       types: Array(12).fill(null),
       rollovers: Array(12).fill(false),
       spent: spent[c.id] ?? Array(12).fill(0),
+    });
+    type Group = { parent: Row; children: Row[]; parentTotalBudget: number[] };
+    const groups: Group[] = parents.map((c: any) => ({
+      parent: mkRow(c, true),
+      children: (childrenByParent.get(c.id) ?? []).map((sc) => mkRow(sc, false)),
+      parentTotalBudget: Array(12).fill(0),
     }));
-    const byId = new Map(rows.map((r) => [r.id, r]));
+    const rowsById = new Map<string, Row>();
+    for (const g of groups) {
+      rowsById.set(g.parent.id, g.parent);
+      for (const ch of g.children) rowsById.set(ch.id, ch);
+    }
     for (const b of budgets) {
-      const r = byId.get(b.category_id);
+      const r = rowsById.get(b.category_id);
       if (!r) continue;
       const m = new Date((b.month as string) + "T00:00:00Z").getUTCMonth();
       r.budgets[m] = Number(b.amount_usd);
       r.types[m] = (b.budget_type as BudgetType) ?? "flex";
       r.rollovers[m] = !!b.rollover_enabled;
     }
+    // Aggregate per-group total budget (parent's own + children) for the grid totals
+    for (const g of groups) {
+      for (let m = 0; m < 12; m++) {
+        let sum = g.parent.budgets[m] ?? 0;
+        for (const ch of g.children) sum += ch.budgets[m] ?? 0;
+        g.parentTotalBudget[m] = sum;
+      }
+    }
 
     const monthlyTotals = Array(12).fill(0);
     const monthlySpent = Array(12).fill(0);
-    for (const r of rows) {
+    for (const g of groups) {
       for (let m = 0; m < 12; m++) {
-        monthlyTotals[m] += r.budgets[m] ?? 0;
-        monthlySpent[m] += r.spent[m];
+        monthlyTotals[m] += g.parentTotalBudget[m];
+        monthlySpent[m] += g.parent.spent[m];
       }
     }
-    return { rows, monthlyTotals, monthlySpent };
+    return { groups, monthlyTotals, monthlySpent };
   }, [data]);
 
   return (
@@ -135,71 +162,21 @@ function BudgetsPage() {
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => {
-              const total = r.budgets.reduce((s: number, v) => s + (v ?? 0), 0);
-              // compute rollover availability per month for display
-              let carry = 0;
-              const available = r.budgets.map((b, m) => {
-                const t = r.types[m] ?? "flex";
-                const base = b ?? 0;
-                const avail = base + (r.rollovers[m] ? carry : 0);
-                if (r.rollovers[m]) {
-                  carry = avail - r.spent[m];
-                } else {
-                  carry = 0;
-                }
-                return { avail, type: t };
-              });
+            {groups.map((g) => {
+              const isOpen = !!expanded[g.parent.id];
+              const total = g.parentTotalBudget.reduce((s, v) => s + v, 0);
               return (
-                <tr key={r.id} className="border-t border-border hover:bg-secondary/20">
-                  <td className="px-3 py-2 sticky left-0 bg-card z-10">
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <div className="h-3 w-3 rounded-full" style={{ background: r.color }} />
-                        <span className="font-medium">{r.name}</span>
-                      </div>
-                      <ApplyToYearPopover
-                        onApply={(amount, type, rollover) =>
-                          applyMut.mutate({ category_id: r.id, amount_usd: amount, budget_type: type, rollover_enabled: rollover })
-                        }
-                      />
-                    </div>
-                  </td>
-                  {r.budgets.map((b, m) => {
-                    const spent = r.spent[m];
-                    const type = r.types[m] ?? "flex";
-                    const rollover = r.rollovers[m];
-                    const avail = available[m].avail;
-                    const over = avail > 0 && spent > avail;
-                    const ratio = avail > 0 ? Math.min(spent / avail, 1.5) : 0;
-                    return (
-                      <td key={m} className="px-1.5 py-1 align-top">
-                        <CellEditor
-                          value={b}
-                          type={type}
-                          rollover={rollover}
-                          onSave={(amt, t, ro) =>
-                            upsertMut.mutate({
-                              category_id: r.id,
-                              month: monthKey(year, m),
-                              amount_usd: amt,
-                              budget_type: t,
-                              rollover_enabled: ro,
-                            })
-                          }
-                          onClear={() => delMut.mutate({ category_id: r.id, month: monthKey(year, m) })}
-                        />
-                        <div className="mt-1 h-1 rounded-full bg-secondary overflow-hidden">
-                          <div className={`h-full ${over ? "bg-destructive" : "bg-primary"}`} style={{ width: `${ratio * 100}%` }} />
-                        </div>
-                        <div className={`mt-0.5 text-[10px] tabular-nums ${over ? "text-destructive" : "text-muted-foreground"}`}>
-                          {spent > 0 ? formatCurrency(spent) : "—"}
-                        </div>
-                      </td>
-                    );
-                  })}
-                  <td className="px-3 py-2 text-right tabular-nums font-medium">{formatCurrency(total)}</td>
-                </tr>
+                <FragmentRows
+                  key={g.parent.id}
+                  group={g}
+                  isOpen={isOpen}
+                  onToggle={() => setExpanded((s) => ({ ...s, [g.parent.id]: !s[g.parent.id] }))}
+                  total={total}
+                  year={year}
+                  onUpsert={(v) => upsertMut.mutate(v)}
+                  onDelete={(v) => delMut.mutate(v)}
+                  onApplyYear={(v) => applyMut.mutate(v)}
+                />
               );
             })}
           </tbody>
