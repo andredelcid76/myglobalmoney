@@ -292,7 +292,7 @@ function FragmentRows({
         <td className="px-3 py-2 text-right tabular-nums font-semibold">{formatCurrency(total)}</td>
       </tr>
       {isOpen && children.map((ch) => {
-        const subTotal = ch.budgets.reduce((s, v) => s + (v ?? 0), 0);
+        const subTotal = ch.budgets.reduce<number>((s, v) => s + (v ?? 0), 0);
         return (
           <tr key={ch.id} className="border-t border-border/50 hover:bg-secondary/10">
             <td className="px-3 py-2 sticky left-0 bg-card z-10">
@@ -348,13 +348,14 @@ function FragmentRows({
 }
 
 function CellEditor({
-  value, type, rollover, onSave, onClear,
+  value, type, rollover, onSave, onClear, displayValue,
 }: {
   value: number | null;
   type: BudgetType;
   rollover: boolean;
   onSave: (amount: number, type: BudgetType, rollover: boolean) => void;
   onClear: () => void;
+  displayValue?: number | null;
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<string>(value != null ? String(value) : "");
@@ -369,8 +370,8 @@ function CellEditor({
         <button className="w-full rounded border border-border bg-input px-2 py-1 text-right tabular-nums hover:border-primary/60 transition">
           <div className="flex items-center justify-between gap-1">
             <span className={`h-1.5 w-1.5 rounded-full ${value != null ? indicator : "bg-muted"}`} />
-            <span className={value != null ? "" : "text-muted-foreground"}>
-              {value != null ? formatCurrency(value) : "—"}
+            <span className={(displayValue ?? value) != null ? "" : "text-muted-foreground"}>
+              {(displayValue ?? value) != null ? formatCurrency((displayValue ?? value) as number) : "—"}
             </span>
             {rollover && <span className="text-[9px] text-muted-foreground">↻</span>}
           </div>
