@@ -195,11 +195,13 @@ export const getProjections = createServerFn({ method: "POST" })
     const now = new Date();
     const startHist = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 5, 1));
     const startStr = startHist.toISOString().slice(0, 10);
-    const [txRes, accountsRes] = await Promise.all([
+    const [txRes, accountsRes, recsRes] = await Promise.all([
       context.supabase.from("transactions").select("date, amount_usd").eq("user_id", context.userId).eq("is_transfer", false).gte("date", startStr),
       context.supabase.from("accounts").select("currency, initial_balance").eq("user_id", context.userId).eq("is_archived", false),
+      context.supabase.from("recurrences").select("amount_usd, cadence, is_income, is_active, next_date").eq("user_id", context.userId).eq("is_active", true),
     ]);
     const tx = txRes.data ?? [];
+    const recs = recsRes.data ?? [];
     // Group historical tx by month
     const byMonth = new Map<string, { income: number; expense: number }>();
     for (const t of tx) {
@@ -233,14 +235,27 @@ export const getProjections = createServerFn({ method: "POST" })
       net: (byMonth.get(k)?.income ?? 0) - (byMonth.get(k)?.expense ?? 0),
     }));
 
+    // Monthly equivalent of each recurrence
+    const cadenceFactor: Record<string, number> = {
+      weekly: 52 / 12, biweekly: 26 / 12, monthly: 1, quarterly: 1 / 3, yearly: 1 / 12,
+    };
+    let recIncome = 0, recExpense = 0;
+    for (const r of recs) {
+      const monthly = Math.abs(Number(r.amount_usd)) * (cadenceFactor[r.cadence as string] ?? 1);
+      if (r.is_income) recIncome += monthly; else recExpense += monthly;
+    }
+    const useRecs = recs.length > 0;
+    const projIncome = useRecs ? recIncome : avgIncome;
+    const projExpense = useRecs ? recExpense : avgExpense;
+
     const projection: { month: string; income: number; expense: number; net: number; cumulative: number }[] = [];
     let cumulative = currentNet;
     for (let i = 0; i < data.months; i++) {
       const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + i, 1));
       const key = d.toISOString().slice(0, 7);
-      const net = avgIncome - avgExpense;
+      const net = projIncome - projExpense;
       cumulative += net;
-      projection.push({ month: key, income: avgIncome, expense: avgExpense, net, cumulative });
+      projection.push({ month: key, income: projIncome, expense: projExpense, net, cumulative });
     }
-    return { currentNet, avgIncome, avgExpense, history, projection };
+    return { currentNet, avgIncome, avgExpense, history, projection, basis: useRecs ? "recurrences" : "average", recurrencesCount: recs.length };
   });
