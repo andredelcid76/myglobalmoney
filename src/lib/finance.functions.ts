@@ -82,3 +82,165 @@ export const importTransactions = createServerFn({ method: "POST" })
     }
     return { inserted };
   });
+
+// ---------- Accounts ----------
+export const listAccounts = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { data, error } = await context.supabase.from("accounts").select("*").eq("user_id", context.userId).order("created_at");
+    if (error) throw new Error(error.message);
+    return { accounts: data ?? [] };
+  });
+
+export const upsertAccount = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({
+    id: z.string().uuid().optional(),
+    name: z.string().min(1).max(100),
+    type: z.enum(["checking", "savings", "credit_card", "cash", "investment"]),
+    currency: z.enum(["USD", "BRL"]),
+    institution: z.string().max(100).optional().nullable(),
+    color: z.string().max(20).optional(),
+    initial_balance: z.number().default(0),
+    is_archived: z.boolean().optional(),
+  }).parse(d))
+  .handler(async ({ data, context }) => {
+    const payload = { ...data, user_id: context.userId };
+    const { error } = data.id
+      ? await context.supabase.from("accounts").update(payload).eq("id", data.id).eq("user_id", context.userId)
+      : await context.supabase.from("accounts").insert(payload);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+// ---------- Categories ----------
+export const listCategories = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { data, error } = await context.supabase.from("categories").select("*").eq("user_id", context.userId).order("name");
+    if (error) throw new Error(error.message);
+    return { categories: data ?? [] };
+  });
+
+export const upsertCategory = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({
+    id: z.string().uuid().optional(),
+    name: z.string().min(1).max(100),
+    parent_id: z.string().uuid().nullable().optional(),
+    color: z.string().max(20).optional(),
+    is_income: z.boolean().optional(),
+  }).parse(d))
+  .handler(async ({ data, context }) => {
+    const payload = { ...data, user_id: context.userId };
+    const { error } = data.id
+      ? await context.supabase.from("categories").update(payload).eq("id", data.id).eq("user_id", context.userId)
+      : await context.supabase.from("categories").insert(payload);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const deleteCategory = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ id: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase.from("categories").delete().eq("id", data.id).eq("user_id", context.userId);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+// ---------- Budgets ----------
+export const listBudgets = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ month: z.string() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const [budgets, categories, tx] = await Promise.all([
+      context.supabase.from("budgets").select("*").eq("user_id", context.userId).eq("month", data.month),
+      context.supabase.from("categories").select("*").eq("user_id", context.userId),
+      context.supabase.from("transactions").select("category_id, amount_usd").eq("user_id", context.userId)
+        .gte("date", data.month).lte("date", endOfMonth(data.month)),
+    ]);
+    return { budgets: budgets.data ?? [], categories: categories.data ?? [], monthTx: tx.data ?? [] };
+  });
+
+export const upsertBudget = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({
+    category_id: z.string().uuid(),
+    month: z.string(),
+    amount_usd: z.number().min(0),
+  }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { data: existing } = await context.supabase.from("budgets").select("id").eq("user_id", context.userId)
+      .eq("category_id", data.category_id).eq("month", data.month).maybeSingle();
+    const payload = { ...data, user_id: context.userId };
+    const { error } = existing
+      ? await context.supabase.from("budgets").update(payload).eq("id", existing.id)
+      : await context.supabase.from("budgets").insert(payload);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+// ---------- Projections ----------
+function endOfMonth(monthStart: string) {
+  const d = new Date(monthStart + "T00:00:00Z");
+  const e = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0));
+  return e.toISOString().slice(0, 10);
+}
+
+export const getProjections = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ months: z.number().min(1).max(24).default(6) }).parse(d))
+  .handler(async ({ data, context }) => {
+    const now = new Date();
+    const startHist = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 5, 1));
+    const startStr = startHist.toISOString().slice(0, 10);
+    const [txRes, accountsRes] = await Promise.all([
+      context.supabase.from("transactions").select("date, amount_usd").eq("user_id", context.userId).gte("date", startStr),
+      context.supabase.from("accounts").select("currency, initial_balance").eq("user_id", context.userId).eq("is_archived", false),
+    ]);
+    const tx = txRes.data ?? [];
+    // Group historical tx by month
+    const byMonth = new Map<string, { income: number; expense: number }>();
+    for (const t of tx) {
+      const key = (t.date as string).slice(0, 7);
+      const v = byMonth.get(key) ?? { income: 0, expense: 0 };
+      const amt = Number(t.amount_usd);
+      if (amt >= 0) v.income += amt; else v.expense += -amt;
+      byMonth.set(key, v);
+    }
+    // Last 3 closed months for averages
+    const histKeys: string[] = [];
+    for (let i = 3; i >= 1; i--) {
+      const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+      histKeys.push(d.toISOString().slice(0, 7));
+    }
+    const avgIncome = histKeys.reduce((s, k) => s + (byMonth.get(k)?.income ?? 0), 0) / Math.max(histKeys.length, 1);
+    const avgExpense = histKeys.reduce((s, k) => s + (byMonth.get(k)?.expense ?? 0), 0) / Math.max(histKeys.length, 1);
+
+    // Current net worth in USD (initial balances + sum of all amount_usd)
+    const initial = (accountsRes.data ?? []).reduce((s, a) => s + Number(a.initial_balance ?? 0), 0);
+    const totalTx = tx.reduce((s, t) => s + Number(t.amount_usd ?? 0), 0);
+    // include older tx too
+    const { data: older } = await context.supabase.from("transactions").select("amount_usd").eq("user_id", context.userId).lt("date", startStr);
+    const olderSum = (older ?? []).reduce((s, t) => s + Number(t.amount_usd ?? 0), 0);
+    const currentNet = initial + totalTx + olderSum;
+
+    const history = histKeys.map((k) => ({
+      month: k,
+      income: byMonth.get(k)?.income ?? 0,
+      expense: byMonth.get(k)?.expense ?? 0,
+      net: (byMonth.get(k)?.income ?? 0) - (byMonth.get(k)?.expense ?? 0),
+    }));
+
+    const projection: { month: string; income: number; expense: number; net: number; cumulative: number }[] = [];
+    let cumulative = currentNet;
+    for (let i = 0; i < data.months; i++) {
+      const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + i, 1));
+      const key = d.toISOString().slice(0, 7);
+      const net = avgIncome - avgExpense;
+      cumulative += net;
+      projection.push({ month: key, income: avgIncome, expense: avgExpense, net, cumulative });
+    }
+    return { currentNet, avgIncome, avgExpense, history, projection };
+  });
