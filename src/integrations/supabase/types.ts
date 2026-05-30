@@ -59,28 +59,34 @@ export type Database = {
       budgets: {
         Row: {
           amount_usd: number
+          budget_type: string
           category_id: string
           created_at: string
           id: string
           month: string
+          rollover_enabled: boolean
           updated_at: string
           user_id: string
         }
         Insert: {
           amount_usd: number
+          budget_type?: string
           category_id: string
           created_at?: string
           id?: string
           month: string
+          rollover_enabled?: boolean
           updated_at?: string
           user_id: string
         }
         Update: {
           amount_usd?: number
+          budget_type?: string
           category_id?: string
           created_at?: string
           id?: string
           month?: string
+          rollover_enabled?: boolean
           updated_at?: string
           user_id?: string
         }
