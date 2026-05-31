@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Split, Tag as TagIcon, X, Undo2, Plus, Trash2, ChevronDown, ChevronRight } from "lucide-react";
+import { Split, Tag as TagIcon, X, Undo2, Plus, Trash2, ChevronLeft, ChevronRight as ChevronRightIcon } from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
