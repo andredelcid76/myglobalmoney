@@ -52,7 +52,7 @@ export const getLedgerView = createServerFn({ method: "POST" })
     const [accRes, txInRes, txBeforeRes] = await Promise.all([
       supabase.from("accounts").select("id,name,currency,initial_balance,color").eq("user_id", userId),
       (() => {
-        let q = supabase.from("transactions").select("id,date,merchant,amount,amount_usd,currency,category_id,account_id")
+        let q = supabase.from("transactions").select("id,date,merchant,amount,amount_usd,currency,category_id,account_id,is_transfer,notes")
           .eq("user_id", userId).gte("date", data.from).lte("date", data.to).order("date");
         if (data.accountId) q = q.eq("account_id", data.accountId);
         return q;
@@ -88,16 +88,44 @@ export const getLedgerView = createServerFn({ method: "POST" })
     };
     const buckets = new Map<string, Bucket>();
     const txList = txInRes.data ?? [];
+    // Categories for label lookup
+    const catRes = await supabase.from("categories").select("id,name").eq("user_id", userId);
+    const catMap = new Map((catRes.data ?? []).map((c) => [c.id, c.name as string]));
+
+    let transferIn = 0, transferOut = 0, incomeTotal = 0, expenseTotal = 0;
+    // Flat entries with running balance
+    const entries: any[] = [];
+    let runningTx = opening;
     for (const t of txList) {
       const b = bucketKey(t.date as string, data.granularity);
       const cur = buckets.get(b.key) ?? { key: b.key, start: b.start, end: b.end, label: b.label, income: 0, expense: 0, count: 0, transactions: [] };
       const amt = useUsd ? Number(t.amount_usd) : Number(t.amount);
       if (amt >= 0) cur.income += amt; else cur.expense += -amt;
       cur.count += 1;
+      if ((t as any).is_transfer) {
+        if (amt >= 0) transferIn += amt; else transferOut += -amt;
+      } else {
+        if (amt >= 0) incomeTotal += amt; else expenseTotal += -amt;
+      }
+      runningTx += amt;
+      const entry = {
+        id: t.id, date: t.date, merchant: t.merchant,
+        amount: amt, currency,
+        category_id: t.category_id,
+        category_name: t.category_id ? (catMap.get(t.category_id as string) ?? null) : null,
+        account_id: t.account_id,
+        is_transfer: !!(t as any).is_transfer,
+        notes: (t as any).notes ?? null,
+        balance: runningTx,
+      };
+      entries.push(entry);
       cur.transactions.push({
         id: t.id, date: t.date, merchant: t.merchant,
         amount: useUsd ? Number(t.amount_usd) : Number(t.amount),
         currency, category_id: t.category_id, account_id: t.account_id,
+        category_name: entry.category_name,
+        is_transfer: entry.is_transfer,
+        balance: runningTx,
       });
       buckets.set(b.key, cur);
     }
@@ -116,6 +144,14 @@ export const getLedgerView = createServerFn({ method: "POST" })
       accountName: account?.name ?? "Todas as contas",
       periods,
       closing: running,
+      entries,
+      totals: {
+        income: incomeTotal,
+        expense: expenseTotal,
+        transferIn,
+        transferOut,
+        net: incomeTotal + transferIn - expenseTotal - transferOut,
+      },
       accounts: accounts.map((a) => ({ id: a.id, name: a.name, currency: a.currency, color: a.color })),
     };
   });
