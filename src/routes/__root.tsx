@@ -79,14 +79,18 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Cofre — Gestão financeira pessoal" },
+      { title: "My Global Money" },
       { name: "description", content: "Controle simples e bilíngue (USD/BRL) das suas contas, gastos por categoria e orçamento mensal." },
       { name: "author", content: "Lovable" },
-      { property: "og:title", content: "Cofre — Gestão financeira pessoal" },
+      { property: "og:title", content: "My Global Money" },
       { property: "og:description", content: "Controle simples e bilíngue (USD/BRL) das suas contas, gastos por categoria e orçamento mensal." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@Lovable" },
+      { name: "twitter:title", content: "My Global Money" },
+      { name: "twitter:description", content: "Controle simples e bilíngue (USD/BRL) das suas contas, gastos por categoria e orçamento mensal." },
+      { property: "og:image", content: "https://storage.googleapis.com/gpt-engineer-file-uploads/attachments/og-images/de5ec345-9624-4588-8857-25777d13a4b4" },
+      { name: "twitter:image", content: "https://storage.googleapis.com/gpt-engineer-file-uploads/attachments/og-images/de5ec345-9624-4588-8857-25777d13a4b4" },
     ],
     links: [
       {
