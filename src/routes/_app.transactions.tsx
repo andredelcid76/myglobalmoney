@@ -416,10 +416,24 @@ function TxLedgerView() {
             <SidebarLine label="Transferências de entrada" value={data.totals.transferIn} currency={data.currency} positive />
             <SidebarLine label="Despesas" value={-data.totals.expense} currency={data.currency} negative />
             <SidebarLine label="Transferências de saída" value={-data.totals.transferOut} currency={data.currency} negative />
+            {((data.totals as any).projectedIncome > 0 || (data.totals as any).projectedExpense > 0) && (
+              <>
+                <SidebarLine label="Receitas previstas" value={(data.totals as any).projectedIncome ?? 0} currency={data.currency} positive />
+                <SidebarLine label="Despesas previstas" value={-((data.totals as any).projectedExpense ?? 0)} currency={data.currency} negative />
+              </>
+            )}
             <SidebarLine label="Resultado" value={data.totals.net} currency={data.currency} bold accent={data.totals.net >= 0 ? "positive" : "negative"} />
             <SidebarLine label="Saldo final" value={data.closing} currency={data.currency} bold accent={data.closing >= 0 ? "positive" : "negative"} />
           </div>
         )}
+
+        <div className="rounded-xl border border-border bg-card p-3 text-xs space-y-1.5">
+          <div className="uppercase tracking-widest text-muted-foreground text-[10px] mb-1">Legenda</div>
+          <LegendDot color="bg-emerald-500" label="Confirmado" />
+          <LegendDot color="bg-amber-400" label="Agendado" />
+          <LegendDot color="bg-rose-500" label="Pendente" />
+          <LegendDot color="bg-sky-500" label="Projetado (orçamento / fatura)" />
+        </div>
       </div>
 
       {/* Main extract */}
@@ -457,20 +471,34 @@ function TxLedgerView() {
             )}
             {g.entries.map((t) => {
               const acc = data?.accounts.find((a) => a.id === t.account_id);
+              const status = (t.status ?? "confirmed") as "confirmed" | "scheduled" | "pending" | "projected";
+              const dotColor = t.is_transfer
+                ? "bg-amber-500"
+                : status === "confirmed"
+                  ? (Number(t.amount) >= 0 ? "bg-emerald-500" : "bg-emerald-500")
+                  : status === "scheduled"
+                    ? "bg-amber-400"
+                    : status === "pending"
+                      ? "bg-rose-500"
+                      : "bg-sky-500";
+              const isProjected = t.source && t.source !== "real";
               return (
-                <div key={t.id} className="grid grid-cols-[80px_1fr_140px_160px] gap-3 px-4 py-2 border-b border-border/60 hover:bg-secondary/20 text-sm">
+                <div key={t.id} className={`grid grid-cols-[80px_1fr_140px_160px] gap-3 px-4 py-2 border-b border-border/60 hover:bg-secondary/20 text-sm ${isProjected ? "bg-secondary/5" : ""}`}>
                   <div className="text-muted-foreground whitespace-nowrap">{t.date.slice(8, 10)}/{t.date.slice(5, 7)}</div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className={`inline-block h-2 w-2 rounded-full ${t.is_transfer ? "bg-amber-400" : Number(t.amount) >= 0 ? "bg-success" : "bg-destructive"}`} />
-                      <span className="font-medium truncate">{t.merchant}</span>
+                      <span className={`inline-block h-2.5 w-2.5 rounded-full shrink-0 ${dotColor}`} title={status} />
+                      <span className={`font-medium truncate ${isProjected ? "italic text-muted-foreground" : ""}`}>{t.merchant}</span>
                       {t.is_transfer && <Badge variant="outline" className="text-[10px]">transf.</Badge>}
+                      {t.source === "recurrence" && <Badge variant="outline" className="text-[10px]">recorrente</Badge>}
+                      {t.source === "budget" && <Badge variant="outline" className="text-[10px]">orçado</Badge>}
+                      {t.source === "cc_invoice" && <Badge variant="outline" className="text-[10px]">fatura</Badge>}
                     </div>
                     <div className="text-xs text-muted-foreground pl-4">
                       {t.category_name ?? "Sem categoria"}{acc ? ` · ${acc.name}` : ""}
                     </div>
                   </div>
-                  <div className={`text-right tabular-nums self-center ${Number(t.amount) < 0 ? "text-destructive" : "text-success"}`}>
+                  <div className={`text-right tabular-nums self-center ${isProjected ? "opacity-70" : ""} ${Number(t.amount) < 0 ? "text-destructive" : "text-success"}`}>
                     {formatCurrency(Number(t.amount), data!.currency)}
                   </div>
                   <div className={`text-right tabular-nums self-center font-medium ${Number(t.balance) < 0 ? "text-destructive" : ""}`}>
@@ -514,6 +542,15 @@ function SidebarLine({ label, value, currency, positive, negative, bold, accent 
     <div className={`flex items-center justify-between px-4 py-1.5 text-sm border-b border-border/60 last:border-b-0 ${bold ? "font-semibold bg-secondary/10" : ""}`}>
       <span className="text-muted-foreground">{label}</span>
       <span className={`tabular-nums ${cls}`}>{formatCurrency(value, currency)}</span>
+    </div>
+  );
+}
+
+function LegendDot({ color, label }: { color: string; label: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className={`inline-block h-2.5 w-2.5 rounded-full ${color}`} />
+      <span className="text-muted-foreground">{label}</span>
     </div>
   );
 }
