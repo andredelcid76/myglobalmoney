@@ -12,6 +12,11 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { getBudgetMonthlyPro, upsertCategoryGroup, toggleRollover } from "@/lib/budgets-pro.functions";
+import { addMonths, monthLabel, startOfMonth } from "@/lib/format";
+import { AlertTriangle, TrendingDown, TrendingUp, Minus, RotateCcw } from "lucide-react";
+import { Select as UISelect, SelectContent as UISelectContent, SelectItem as UISelectItem, SelectTrigger as UISelectTrigger, SelectValue as UISelectValue } from "@/components/ui/select";
 
 export const Route = createFileRoute("/_app/budgets")({ component: BudgetsPage });
 
@@ -23,6 +28,27 @@ function monthKey(year: number, idx: number) {
 }
 
 function BudgetsPage() {
+  return (
+    <Tabs defaultValue="monthly" className="space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Orçamento</h1>
+          <p className="text-sm text-muted-foreground">Mensal com buckets · grade anual · rollover</p>
+        </div>
+        <TabsList>
+          <TabsTrigger value="monthly">Mensal</TabsTrigger>
+          <TabsTrigger value="yearly">Anual</TabsTrigger>
+          <TabsTrigger value="rollover">Rollover</TabsTrigger>
+        </TabsList>
+      </div>
+      <TabsContent value="monthly"><BudgetsMonthlyView /></TabsContent>
+      <TabsContent value="yearly"><BudgetsYearlyView /></TabsContent>
+      <TabsContent value="rollover"><BudgetsRolloverView /></TabsContent>
+    </Tabs>
+  );
+}
+
+function BudgetsYearlyView() {
   const [year, setYear] = useState(new Date().getFullYear());
   const fetchYear = useServerFn(listBudgetsYear);
   const upsert = useServerFn(upsertBudget);
