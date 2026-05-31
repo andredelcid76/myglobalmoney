@@ -3,18 +3,36 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { listTransactions, updateTxCategory } from "@/lib/finance.functions";
 import { splitTransaction, unsplitTransaction, updateTxTags, listAllTags } from "@/lib/splits.functions";
+import { getLedgerView } from "@/lib/ledger.functions";
 import { formatCurrency, formatDate } from "@/lib/format";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Split, Tag as TagIcon, X, Undo2, Plus, Trash2 } from "lucide-react";
+import { Split, Tag as TagIcon, X, Undo2, Plus, Trash2, ChevronDown, ChevronRight } from "lucide-react";
 import { toast } from "sonner";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export const Route = createFileRoute("/_app/transactions")({ component: TxPage });
 
 function TxPage() {
+  return (
+    <div className="space-y-4">
+      <h1 className="text-2xl font-semibold tracking-tight">Transações</h1>
+      <Tabs defaultValue="list" className="space-y-4">
+        <TabsList>
+          <TabsTrigger value="list">Lista</TabsTrigger>
+          <TabsTrigger value="ledger">Extrato</TabsTrigger>
+        </TabsList>
+        <TabsContent value="list"><TxListView /></TabsContent>
+        <TabsContent value="ledger"><TxLedgerView /></TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+function TxListView() {
   const [search, setSearch] = useState("");
   const [accountId, setAccountId] = useState<string>("");
   const [tag, setTag] = useState<string>("");
@@ -49,7 +67,6 @@ function TxPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight">Transações</h1>
       <div className="flex flex-wrap gap-2">
         <Input placeholder="Buscar..." value={search} onChange={(e) => setSearch(e.target.value)} className="max-w-xs" />
         <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className="rounded-md border border-border bg-input px-3 py-2 text-sm">
