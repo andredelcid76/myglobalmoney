@@ -193,6 +193,114 @@ export const deleteBudget = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+// ---------- Budget suggestions & reallocation ----------
+function medianOf(arr: number[]) {
+  if (!arr.length) return 0;
+  const s = [...arr].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+
+export const getBudgetSuggestions = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ months: z.number().int().min(1).max(24).default(6) }).parse(d))
+  .handler(async ({ data, context }) => {
+    const now = new Date();
+    const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - data.months, 1));
+    const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0));
+    const [txRes, catsRes] = await Promise.all([
+      context.supabase.from("transactions")
+        .select("category_id, amount_usd, date")
+        .eq("user_id", context.userId).eq("is_transfer", false)
+        .gte("date", start.toISOString().slice(0, 10))
+        .lte("date", end.toISOString().slice(0, 10)),
+      context.supabase.from("categories").select("id, parent_id").eq("user_id", context.userId),
+    ]);
+    const cats = catsRes.data ?? [];
+    const parentOf = new Map<string, string | null>();
+    for (const c of cats) parentOf.set(c.id, c.parent_id ?? null);
+
+    // monthly[catId][monthKey] = spent
+    const monthly = new Map<string, Map<string, number>>();
+    for (const t of txRes.data ?? []) {
+      const amt = Number(t.amount_usd);
+      if (amt >= 0 || !t.category_id) continue;
+      const spent = -amt;
+      const mk = (t.date as string).slice(0, 7);
+      const targets = [t.category_id, parentOf.get(t.category_id) ?? null].filter(Boolean) as string[];
+      for (const id of targets) {
+        const m = monthly.get(id) ?? new Map<string, number>();
+        m.set(mk, (m.get(mk) ?? 0) + spent);
+        monthly.set(id, m);
+      }
+    }
+    const stats: Record<string, { avg: number; median: number; max: number; last: number; months: number }> = {};
+    for (const [catId, m] of monthly) {
+      const vals = Array.from(m.values());
+      // pad with zeros for months observed window
+      while (vals.length < data.months) vals.push(0);
+      const sum = vals.reduce((s, n) => s + n, 0);
+      const avg = sum / vals.length;
+      const med = medianOf(vals);
+      const max = Math.max(...vals);
+      // last closed month
+      const lastKey = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1)).toISOString().slice(0, 7);
+      const last = m.get(lastKey) ?? 0;
+      stats[catId] = { avg, median: med, max, last, months: vals.length };
+    }
+    return { stats, windowMonths: data.months };
+  });
+
+export const reallocateBudget = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({
+    from_category_id: z.string().uuid(),
+    to_category_id: z.string().uuid(),
+    month: z.string(),
+    amount_usd: z.number().positive(),
+  }).parse(d))
+  .handler(async ({ data, context }) => {
+    if (data.from_category_id === data.to_category_id) throw new Error("Categorias iguais");
+    const sb = context.supabase;
+    const [fromRes, toRes] = await Promise.all([
+      sb.from("budgets").select("*").eq("user_id", context.userId).eq("category_id", data.from_category_id).eq("month", data.month).maybeSingle(),
+      sb.from("budgets").select("*").eq("user_id", context.userId).eq("category_id", data.to_category_id).eq("month", data.month).maybeSingle(),
+    ]);
+    const fromAmt = Number(fromRes.data?.amount_usd ?? 0);
+    const toAmt = Number(toRes.data?.amount_usd ?? 0);
+    const newFrom = Math.max(0, fromAmt - data.amount_usd);
+    const newTo = toAmt + data.amount_usd;
+    if (fromRes.data) {
+      await sb.from("budgets").update({ amount_usd: newFrom }).eq("id", fromRes.data.id);
+    } else {
+      await sb.from("budgets").insert({ user_id: context.userId, category_id: data.from_category_id, month: data.month, amount_usd: newFrom, budget_type: "flex" });
+    }
+    if (toRes.data) {
+      await sb.from("budgets").update({ amount_usd: newTo }).eq("id", toRes.data.id);
+    } else {
+      await sb.from("budgets").insert({ user_id: context.userId, category_id: data.to_category_id, month: data.month, amount_usd: newTo, budget_type: "flex" });
+    }
+    return { ok: true, from: newFrom, to: newTo };
+  });
+
+export const bulkUpsertBudgets = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({
+    items: z.array(z.object({
+      category_id: z.string().uuid(),
+      month: z.string(),
+      amount_usd: z.number().min(0),
+      budget_type: z.enum(["fixed", "flex", "annual"]).default("flex"),
+      rollover_enabled: z.boolean().default(false),
+    })).min(1).max(2000),
+  }).parse(d))
+  .handler(async ({ data, context }) => {
+    const rows = data.items.map((r) => ({ ...r, user_id: context.userId }));
+    const { error } = await context.supabase.from("budgets").upsert(rows, { onConflict: "user_id,category_id,month" });
+    if (error) throw new Error(error.message);
+    return { ok: true, count: rows.length };
+  });
+
 export const applyBudgetToYear = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d) => z.object({
