@@ -41,8 +41,8 @@ function AccountsPage() {
     const a = data.accounts.find((x: any) => x.id === m[1]);
     if (a) {
       setForm({
-        id: a.id, name: a.name, type: a.type, currency: a.currency,
-        institution: a.institution ?? "", color: a.color,
+        id: a.id, name: a.name, type: a.type as Form["type"], currency: a.currency as Form["currency"],
+        institution: a.institution ?? "", color: a.color ?? "#4f46e5",
         initial_balance: Number(a.initial_balance),
         closing_day: a.closing_day ?? null,
         due_day: a.due_day ?? null,
