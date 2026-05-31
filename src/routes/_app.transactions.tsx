@@ -517,17 +517,29 @@ function TxLedgerView() {
 
         {grouped.map((g) => (
           <div key={g.key}>
-            {granularity !== "daily" && (
-              <div className="grid grid-cols-[80px_1fr_140px_160px] gap-3 px-4 py-1.5 bg-secondary/20 text-xs font-medium border-b border-border">
-                <div className="text-muted-foreground">{g.label}</div>
-                <div className="text-muted-foreground">{g.entries.length} {g.entries.length === 1 ? "lançamento" : "lançamentos"}</div>
-                <div className={`text-right tabular-nums ${g.subtotal >= 0 ? "text-success" : "text-destructive"}`}>
+            {granularity !== "daily" ? (
+              // Aggregated single row per bucket
+              <div className="grid grid-cols-[80px_1fr_140px_160px] gap-3 px-4 py-2.5 border-b border-border hover:bg-secondary/20 text-sm">
+                <div className="text-muted-foreground whitespace-nowrap">{g.label}</div>
+                <div className="min-w-0">
+                  <div className="font-medium">
+                    {granularity === "weekly" ? "Semana" : "Mês"} · {g.entries.length} {g.entries.length === 1 ? "lançamento" : "lançamentos"}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    Entradas {formatCurrency(g.entries.filter((e: any) => Number(e.amount) > 0).reduce((s: number, e: any) => s + Number(e.amount), 0), data!.currency)}
+                    {" · "}
+                    Saídas {formatCurrency(Math.abs(g.entries.filter((e: any) => Number(e.amount) < 0).reduce((s: number, e: any) => s + Number(e.amount), 0)), data!.currency)}
+                  </div>
+                </div>
+                <div className={`text-right tabular-nums self-center font-medium ${g.subtotal >= 0 ? "text-success" : "text-destructive"}`}>
                   {formatCurrency(g.subtotal, data!.currency)}
                 </div>
-                <div />
+                <div className={`text-right tabular-nums self-center font-medium ${Number(g.entries[g.entries.length - 1]?.balance ?? 0) < 0 ? "text-destructive" : ""}`}>
+                  {formatCurrency(Number(g.entries[g.entries.length - 1]?.balance ?? 0), data!.currency)}
+                </div>
               </div>
-            )}
-            {g.entries.map((t) => {
+            ) : (
+              g.entries.map((t) => {
               const acc = data?.accounts.find((a) => a.id === t.account_id);
               const status = (t.status ?? "confirmed") as "confirmed" | "scheduled" | "pending" | "projected";
               const dotColor = t.is_transfer
@@ -564,7 +576,8 @@ function TxLedgerView() {
                   </div>
                 </div>
               );
-            })}
+              })
+            )}
           </div>
         ))}
 
