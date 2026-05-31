@@ -5,7 +5,7 @@ import { listBudgetsYear, upsertBudget, applyBudgetToYear, deleteBudget, getBudg
 import { formatCurrency } from "@/lib/format";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, ChevronRight, ChevronDown, ChevronRightIcon, Copy, Trash2, Wand2, ArrowLeftRight, Sparkles } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, ChevronRightIcon, Copy, Trash2, ArrowLeftRight, Sparkles } from "lucide-react";
 import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
