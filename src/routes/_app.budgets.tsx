@@ -12,6 +12,11 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { getBudgetMonthlyPro, upsertCategoryGroup, toggleRollover } from "@/lib/budgets-pro.functions";
+import { addMonths, monthLabel, startOfMonth } from "@/lib/format";
+import { AlertTriangle, TrendingDown, TrendingUp, Minus, RotateCcw } from "lucide-react";
+import { Select as UISelect, SelectContent as UISelectContent, SelectItem as UISelectItem, SelectTrigger as UISelectTrigger, SelectValue as UISelectValue } from "@/components/ui/select";
 
 export const Route = createFileRoute("/_app/budgets")({ component: BudgetsPage });
 
@@ -23,6 +28,27 @@ function monthKey(year: number, idx: number) {
 }
 
 function BudgetsPage() {
+  return (
+    <Tabs defaultValue="monthly" className="space-y-4">
+      <div className="flex items-center justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Orçamento</h1>
+          <p className="text-sm text-muted-foreground">Mensal com buckets · grade anual · rollover</p>
+        </div>
+        <TabsList>
+          <TabsTrigger value="monthly">Mensal</TabsTrigger>
+          <TabsTrigger value="yearly">Anual</TabsTrigger>
+          <TabsTrigger value="rollover">Rollover</TabsTrigger>
+        </TabsList>
+      </div>
+      <TabsContent value="monthly"><BudgetsMonthlyView /></TabsContent>
+      <TabsContent value="yearly"><BudgetsYearlyView /></TabsContent>
+      <TabsContent value="rollover"><BudgetsRolloverView /></TabsContent>
+    </Tabs>
+  );
+}
+
+function BudgetsYearlyView() {
   const [year, setYear] = useState(new Date().getFullYear());
   const fetchYear = useServerFn(listBudgetsYear);
   const upsert = useServerFn(upsertBudget);
@@ -541,6 +567,234 @@ function ApplyToYearPopover({ onApply, suggestion }: {
         </Button>
       </PopoverContent>
     </Popover>
+  );
+}
+
+// =================== MENSAL (Pro) ===================
+
+const GROUP_LABELS: Record<string, string> = {
+  renda: "Renda",
+  fixa: "Despesa fixa",
+  variavel: "Despesa variável",
+  poupanca: "Poupança / Metas",
+};
+const GROUP_ORDER = ["renda", "fixa", "variavel", "poupanca"] as const;
+
+function BudgetsMonthlyView() {
+  const [month, setMonth] = useState(startOfMonth());
+  const fetchPro = useServerFn(getBudgetMonthlyPro);
+  const upsertGroup = useServerFn(upsertCategoryGroup);
+  const toggleRO = useServerFn(toggleRollover);
+  const upsert = useServerFn(upsertBudget);
+  const qc = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ["budget-monthly-pro", month],
+    queryFn: () => fetchPro({ data: { month } }),
+  });
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["budget-monthly-pro", month] });
+  const mGroup = useMutation({
+    mutationFn: (v: { id: string; budget_group: "renda" | "fixa" | "variavel" | "poupanca" }) => upsertGroup({ data: v }),
+    onSuccess: invalidate,
+  });
+  const mRO = useMutation({
+    mutationFn: (v: { category_id: string; enabled: boolean }) => toggleRO({ data: { ...v, month } }),
+    onSuccess: invalidate,
+  });
+  const mBudget = useMutation({
+    mutationFn: (v: { category_id: string; amount_usd: number }) =>
+      upsert({ data: { ...v, month, budget_type: "flex" } }),
+    onSuccess: invalidate,
+  });
+
+  if (!data) return <div className="text-sm text-muted-foreground">Carregando…</div>;
+
+  const rowsByGroup: Record<string, any[]> = { renda: [], fixa: [], variavel: [], poupanca: [] };
+  // Only show parents and standalone categories (children are aggregated inside parent.actual already)
+  const leafs = data.rows.filter((r) => r.isParent);
+  for (const r of leafs) (rowsByGroup[r.group] ?? rowsByGroup.variavel).push(r);
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 flex-wrap">
+        <Button size="icon" variant="outline" onClick={() => setMonth(addMonths(month, -1))}><ChevronLeft className="h-4 w-4" /></Button>
+        <div className="min-w-[140px] text-center text-sm font-medium">{monthLabel(month)}</div>
+        <Button size="icon" variant="outline" onClick={() => setMonth(addMonths(month, 1))}><ChevronRight className="h-4 w-4" /></Button>
+        <div className="ml-auto text-xs text-muted-foreground">
+          Dia {data.dayOfMonth}/{data.totalDays} · {Math.round(data.elapsedRatio * 100)}% do mês
+        </div>
+      </div>
+
+      <div className="grid sm:grid-cols-4 gap-3">
+        {GROUP_ORDER.map((g) => {
+          const b = data.buckets[g];
+          const pct = b.effective > 0 ? b.actual / b.effective : 0;
+          return (
+            <div key={g} className="rounded-xl border border-border bg-card p-4">
+              <div className="text-xs uppercase tracking-widest text-muted-foreground">{GROUP_LABELS[g]}</div>
+              <div className="mt-1 text-lg font-semibold tabular-nums">
+                {formatCurrency(b.actual)} <span className="text-xs text-muted-foreground font-normal">/ {formatCurrency(b.effective)}</span>
+              </div>
+              <div className="mt-2 h-1.5 rounded-full bg-secondary overflow-hidden">
+                <div className={`h-full ${pct > 1 ? "bg-destructive" : g === "renda" ? "bg-success" : "bg-primary"}`}
+                  style={{ width: `${Math.min(pct, 1.2) * 100}%` }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {GROUP_ORDER.map((g) => {
+        const rows = rowsByGroup[g] ?? [];
+        if (rows.length === 0) return null;
+        return (
+          <div key={g} className="rounded-xl border border-border bg-card overflow-hidden">
+            <div className="px-4 py-2 bg-secondary/40 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
+              {GROUP_LABELS[g]}
+            </div>
+            <table className="w-full text-sm">
+              <thead className="text-xs text-muted-foreground">
+                <tr>
+                  <th className="text-left px-3 py-2">Categoria</th>
+                  <th className="text-right px-3 py-2">Orçado</th>
+                  <th className="text-right px-3 py-2">Rollover</th>
+                  <th className="text-right px-3 py-2">Realizado</th>
+                  <th className="text-left px-3 py-2 w-40">Progresso</th>
+                  <th className="text-right px-3 py-2">Ritmo</th>
+                  <th className="text-right px-3 py-2">Grupo</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => <MonthlyRow key={r.id} row={r}
+                  onBudget={(v) => mBudget.mutate({ category_id: r.id, amount_usd: v })}
+                  onRollover={(v) => mRO.mutate({ category_id: r.id, enabled: v })}
+                  onGroup={(v) => mGroup.mutate({ id: r.id, budget_group: v as any })}
+                />)}
+              </tbody>
+            </table>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function MonthlyRow({ row, onBudget, onRollover, onGroup }: {
+  row: any; onBudget: (v: number) => void; onRollover: (v: boolean) => void; onGroup: (v: string) => void;
+}) {
+  const [draft, setDraft] = useState(String(row.budgeted ?? 0));
+  const pct = Math.min(row.pct, 1.5);
+  const paceIcon = row.pace === "ahead" ? <TrendingDown className="h-3 w-3 text-success" />
+    : row.pace === "behind" ? <TrendingUp className="h-3 w-3 text-amber-400" />
+    : row.pace === "over" ? <AlertTriangle className="h-3 w-3 text-destructive" />
+    : row.pace === "ontrack" ? <Minus className="h-3 w-3 text-muted-foreground" />
+    : null;
+  const paceText = row.pace === "ahead" ? "à frente"
+    : row.pace === "behind" ? "atrasado"
+    : row.pace === "over" ? "estouro"
+    : row.pace === "ontrack" ? "no ritmo" : "—";
+  return (
+    <tr className="border-t border-border hover:bg-secondary/20">
+      <td className="px-3 py-2">
+        <div className="flex items-center gap-2">
+          <div className="h-2.5 w-2.5 rounded-full" style={{ background: row.color }} />
+          <span className="font-medium">{row.name}</span>
+        </div>
+      </td>
+      <td className="px-3 py-2 text-right">
+        <input type="number" step="10" value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={() => { const n = Number(draft); if (isFinite(n) && n !== row.budgeted) onBudget(n); }}
+          className="w-24 bg-input border border-border rounded px-2 py-1 text-right tabular-nums text-sm" />
+      </td>
+      <td className={`px-3 py-2 text-right tabular-nums text-xs ${row.carryIn > 0 ? "text-success" : row.carryIn < 0 ? "text-destructive" : "text-muted-foreground"}`}>
+        {row.carryIn !== 0 ? formatCurrency(row.carryIn) : "—"}
+      </td>
+      <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(row.actual)}</td>
+      <td className="px-3 py-2">
+        <div className="h-1.5 rounded-full bg-secondary overflow-hidden">
+          <div className={`h-full ${row.pace === "over" ? "bg-destructive" : "bg-primary"}`} style={{ width: `${pct * 100}%` }} />
+        </div>
+        <div className="text-[10px] text-muted-foreground mt-0.5">{Math.round(row.pct * 100)}% de {formatCurrency(row.effective)}</div>
+      </td>
+      <td className="px-3 py-2 text-right text-xs">
+        <span className="inline-flex items-center gap-1">{paceIcon}{paceText}</span>
+      </td>
+      <td className="px-3 py-2 text-right">
+        <div className="flex items-center justify-end gap-2">
+          <button title={row.rollover_enabled ? "Rollover ON" : "Rollover OFF"}
+            onClick={() => onRollover(!row.rollover_enabled)}
+            className={`p-1 rounded ${row.rollover_enabled ? "text-primary" : "text-muted-foreground hover:text-foreground"}`}>
+            <RotateCcw className="h-3.5 w-3.5" />
+          </button>
+          <UISelect value={row.group} onValueChange={onGroup}>
+            <UISelectTrigger className="h-7 text-xs w-28"><UISelectValue /></UISelectTrigger>
+            <UISelectContent>
+              {GROUP_ORDER.map((g) => <UISelectItem key={g} value={g}>{GROUP_LABELS[g]}</UISelectItem>)}
+            </UISelectContent>
+          </UISelect>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+// =================== ROLLOVER ===================
+
+function BudgetsRolloverView() {
+  const [month, setMonth] = useState(startOfMonth());
+  const fetchPro = useServerFn(getBudgetMonthlyPro);
+  const toggleRO = useServerFn(toggleRollover);
+  const qc = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ["budget-monthly-pro", month],
+    queryFn: () => fetchPro({ data: { month } }),
+  });
+  const m = useMutation({
+    mutationFn: (v: { category_id: string; enabled: boolean }) => toggleRO({ data: { ...v, month } }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["budget-monthly-pro", month] }),
+  });
+  if (!data) return <div className="text-sm text-muted-foreground">Carregando…</div>;
+  const rows = data.rows.filter((r) => r.isParent && r.group !== "renda");
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2">
+        <Button size="icon" variant="outline" onClick={() => setMonth(addMonths(month, -1))}><ChevronLeft className="h-4 w-4" /></Button>
+        <div className="min-w-[140px] text-center text-sm font-medium">{monthLabel(month)}</div>
+        <Button size="icon" variant="outline" onClick={() => setMonth(addMonths(month, 1))}><ChevronRight className="h-4 w-4" /></Button>
+        <div className="ml-auto text-xs text-muted-foreground">Sobra/déficit do mês anterior carrega para este mês quando o rollover está ativo.</div>
+      </div>
+      <div className="rounded-xl border border-border bg-card overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-secondary/40 text-xs text-muted-foreground">
+            <tr>
+              <th className="text-left px-3 py-2">Categoria</th>
+              <th className="text-right px-3 py-2">Orçado mês</th>
+              <th className="text-right px-3 py-2">Carry-in</th>
+              <th className="text-right px-3 py-2">Efetivo</th>
+              <th className="text-right px-3 py-2">Realizado</th>
+              <th className="text-right px-3 py-2">Rollover</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.id} className="border-t border-border hover:bg-secondary/20">
+                <td className="px-3 py-2 font-medium">{r.name}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(r.budgeted)}</td>
+                <td className={`px-3 py-2 text-right tabular-nums ${r.carryIn > 0 ? "text-success" : r.carryIn < 0 ? "text-destructive" : "text-muted-foreground"}`}>
+                  {r.carryIn !== 0 ? formatCurrency(r.carryIn) : "—"}
+                </td>
+                <td className="px-3 py-2 text-right tabular-nums font-medium">{formatCurrency(r.effective)}</td>
+                <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(r.actual)}</td>
+                <td className="px-3 py-2 text-right">
+                  <Switch checked={r.rollover_enabled} onCheckedChange={(v) => m.mutate({ category_id: r.id, enabled: v })} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
