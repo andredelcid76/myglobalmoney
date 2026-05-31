@@ -362,6 +362,7 @@ export type Database = {
           merchant: string
           notes: string | null
           original_statement: string | null
+          split_group_id: string | null
           tags: string[] | null
           updated_at: string
           user_id: string
@@ -382,6 +383,7 @@ export type Database = {
           merchant: string
           notes?: string | null
           original_statement?: string | null
+          split_group_id?: string | null
           tags?: string[] | null
           updated_at?: string
           user_id: string
@@ -402,6 +404,7 @@ export type Database = {
           merchant?: string
           notes?: string | null
           original_statement?: string | null
+          split_group_id?: string | null
           tags?: string[] | null
           updated_at?: string
           user_id?: string
