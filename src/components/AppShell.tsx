@@ -1,5 +1,5 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
-import { LayoutDashboard, Receipt, PiggyBank, FolderTree, Wallet, Upload, TrendingUp, LogOut, DollarSign, Repeat, Target, CreditCard } from "lucide-react";
+import { LayoutDashboard, Receipt, PiggyBank, FolderTree, Wallet, Upload, TrendingUp, LogOut, DollarSign, Repeat, Target, CreditCard, Sparkles } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -14,6 +14,7 @@ const nav = [
   { to: "/recurrences", label: "Recorrências", icon: Repeat },
   { to: "/projections", label: "Projeções", icon: TrendingUp },
   { to: "/credit-cards", label: "Cartões", icon: CreditCard },
+  { to: "/rules", label: "Regras & IA", icon: Sparkles },
   { to: "/categories", label: "Categorias", icon: FolderTree },
   { to: "/accounts", label: "Contas", icon: Wallet },
   { to: "/import", label: "Importar CSV", icon: Upload },

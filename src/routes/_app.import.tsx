@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { listTransactions, importTransactions } from "@/lib/finance.functions";
 import { getUsdBrlRate } from "@/lib/fx.functions";
+import { applyRules } from "@/lib/rules.functions";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 
@@ -48,6 +49,7 @@ function ImportPage() {
   const fetchMeta = useServerFn(listTransactions);
   const importFn = useServerFn(importTransactions);
   const fxFn = useServerFn(getUsdBrlRate);
+  const runRules = useServerFn(applyRules);
   const qc = useQueryClient();
   const { data: meta } = useQuery({ queryKey: ["import-meta"], queryFn: () => fetchMeta({ data: { limit: 1 } }) });
   const [rows, setRows] = useState<Row[]>([]);
@@ -114,6 +116,11 @@ function ImportPage() {
       setProgress(`Importando ${prepared.length}...`);
       const { inserted } = await importFn({ data: { rows: prepared } });
       toast.success(`${inserted} transações importadas!`);
+      setProgress("Aplicando regras de categorização...");
+      try {
+        const r = await runRules({ data: { scope: "uncategorized" } });
+        if (r.matched > 0) toast.success(`${r.matched} transações categorizadas automaticamente`);
+      } catch { /* ignore */ }
       qc.invalidateQueries(); setRows([]);
     } catch (e: any) { toast.error(e.message ?? "Erro"); }
     finally { setBusy(false); setProgress(""); }
