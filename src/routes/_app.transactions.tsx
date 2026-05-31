@@ -307,179 +307,213 @@ function TagsDialog({ tx, onClose }: { tx: any; onClose: () => void }) {
 // =================== EXTRATO ===================
 
 type Granularity = "daily" | "weekly" | "monthly";
-type Preset = "this_month" | "last_month" | "last_7" | "last_30" | "last_90" | "ytd" | "custom";
 
-function presetRange(p: Preset): { from: string; to: string } {
-  const today = new Date();
-  const todayStr = today.toISOString().slice(0, 10);
+function monthRange(year: number, month0: number) {
   const fmt = (d: Date) => d.toISOString().slice(0, 10);
-  if (p === "this_month") {
-    const s = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
-    const e = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 0));
-    return { from: fmt(s), to: fmt(e) };
+  const s = new Date(Date.UTC(year, month0, 1));
+  const e = new Date(Date.UTC(year, month0 + 1, 0));
+  return { from: fmt(s), to: fmt(e) };
+}
+
+const MONTH_NAMES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+
+function bucketLabelFor(dateStr: string, gran: Granularity): { key: string; label: string } {
+  const d = new Date(dateStr + "T00:00:00Z");
+  if (gran === "daily") {
+    const dd = String(d.getUTCDate()).padStart(2, "0");
+    const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+    return { key: dateStr, label: `${dd}/${mm}` };
   }
-  if (p === "last_month") {
-    const s = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1));
-    const e = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 0));
-    return { from: fmt(s), to: fmt(e) };
+  if (gran === "weekly") {
+    const diff = (d.getUTCDay() + 6) % 7;
+    const s = new Date(d); s.setUTCDate(s.getUTCDate() - diff);
+    const e = new Date(s); e.setUTCDate(e.getUTCDate() + 6);
+    const key = s.toISOString().slice(0, 10);
+    return { key, label: `${String(s.getUTCDate()).padStart(2, "0")}/${String(s.getUTCMonth() + 1).padStart(2, "0")} – ${String(e.getUTCDate()).padStart(2, "0")}/${String(e.getUTCMonth() + 1).padStart(2, "0")}` };
   }
-  if (p === "last_7") return { from: fmt(new Date(today.getTime() - 6 * 86400000)), to: todayStr };
-  if (p === "last_30") return { from: fmt(new Date(today.getTime() - 29 * 86400000)), to: todayStr };
-  if (p === "last_90") return { from: fmt(new Date(today.getTime() - 89 * 86400000)), to: todayStr };
-  if (p === "ytd") return { from: `${today.getUTCFullYear()}-01-01`, to: todayStr };
-  return { from: fmt(new Date(today.getTime() - 29 * 86400000)), to: todayStr };
+  const key = dateStr.slice(0, 7);
+  return { key, label: `${MONTH_NAMES[d.getUTCMonth()]}/${String(d.getUTCFullYear()).slice(2)}` };
 }
 
 function TxLedgerView() {
-  const [preset, setPreset] = useState<Preset>("this_month");
+  const today = new Date();
+  const [year, setYear] = useState<number>(today.getUTCFullYear());
+  const [month, setMonth] = useState<number>(today.getUTCMonth()); // 0-11
   const [granularity, setGranularity] = useState<Granularity>("daily");
   const [accountId, setAccountId] = useState<string>("");
-  const [customFrom, setCustomFrom] = useState<string>("");
-  const [customTo, setCustomTo] = useState<string>("");
-  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
-  const { from, to } = useMemo(() => {
-    if (preset === "custom" && customFrom && customTo) return { from: customFrom, to: customTo };
-    return presetRange(preset);
-  }, [preset, customFrom, customTo]);
+  const { from, to } = useMemo(() => monthRange(year, month), [year, month]);
 
   const fetchLedger = useServerFn(getLedgerView);
   const { data, isLoading } = useQuery({
     queryKey: ["ledger", from, to, granularity, accountId],
-    queryFn: () => fetchLedger({ data: {
-      from, to, granularity, accountId: accountId || null,
-    } }),
+    queryFn: () => fetchLedger({ data: { from, to, granularity, accountId: accountId || null } }),
   });
 
+  const stepMonth = (delta: number) => {
+    const d = new Date(Date.UTC(year, month + delta, 1));
+    setYear(d.getUTCFullYear()); setMonth(d.getUTCMonth());
+  };
+  const monthLabel = `${MONTH_NAMES[month]} ${year}`;
+
+  // Group flat entries by bucket for visual section headers
+  const grouped = useMemo(() => {
+    if (!data) return [] as Array<{ key: string; label: string; entries: any[]; subtotal: number }>;
+    const map = new Map<string, { key: string; label: string; entries: any[]; subtotal: number }>();
+    const order: string[] = [];
+    for (const e of data.entries) {
+      const b = bucketLabelFor(e.date, granularity);
+      let g = map.get(b.key);
+      if (!g) { g = { key: b.key, label: b.label, entries: [], subtotal: 0 }; map.set(b.key, g); order.push(b.key); }
+      g.entries.push(e);
+      g.subtotal += Number(e.amount);
+    }
+    return order.map((k) => map.get(k)!);
+  }, [data, granularity]);
+
   return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap gap-2 items-center">
-        <select value={preset} onChange={(e) => setPreset(e.target.value as Preset)} className="rounded-md border border-border bg-input px-3 py-2 text-sm">
-          <option value="this_month">Este mês</option>
-          <option value="last_month">Mês anterior</option>
-          <option value="last_7">Últimos 7 dias</option>
-          <option value="last_30">Últimos 30 dias</option>
-          <option value="last_90">Últimos 90 dias</option>
-          <option value="ytd">Ano até hoje</option>
-          <option value="custom">Customizado</option>
-        </select>
-        {preset === "custom" && (
-          <>
-            <Input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} className="w-40" />
-            <Input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} className="w-40" />
-          </>
-        )}
-        <div className="inline-flex rounded-md border border-border overflow-hidden text-sm">
-          {(["daily", "weekly", "monthly"] as Granularity[]).map((g) => (
-            <button key={g} onClick={() => setGranularity(g)}
-              className={`px-3 py-1.5 ${granularity === g ? "bg-primary text-primary-foreground" : "bg-card hover:bg-secondary/40"}`}>
-              {g === "daily" ? "Diário" : g === "weekly" ? "Semanal" : "Mensal"}
+    <div className="grid lg:grid-cols-[320px_1fr] gap-4">
+      {/* Sidebar */}
+      <div className="space-y-4">
+        <div className="rounded-xl border border-border bg-card p-4 space-y-4">
+          <div>
+            <label className="text-xs uppercase tracking-wider text-muted-foreground">Conta</label>
+            <select value={accountId} onChange={(e) => setAccountId(e.target.value)}
+              className="mt-1 w-full rounded-md border border-border bg-input px-3 py-2 text-sm">
+              <option value="">Todas as contas (USD)</option>
+              {data?.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+          </div>
+          <div className="flex items-center justify-between gap-2">
+            <button onClick={() => stepMonth(-1)} className="p-2 rounded-md hover:bg-secondary/40" title="Mês anterior">
+              <ChevronLeft className="h-4 w-4" />
             </button>
-          ))}
+            <div className="text-sm font-medium capitalize">{monthLabel}</div>
+            <button onClick={() => stepMonth(1)} className="p-2 rounded-md hover:bg-secondary/40" title="Próximo mês">
+              <ChevronRightIcon className="h-4 w-4" />
+            </button>
+          </div>
+          <div>
+            <label className="text-xs uppercase tracking-wider text-muted-foreground">Visão</label>
+            <div className="mt-1 inline-flex rounded-md border border-border overflow-hidden text-xs w-full">
+              {(["daily", "weekly", "monthly"] as Granularity[]).map((g) => (
+                <button key={g} onClick={() => setGranularity(g)}
+                  className={`flex-1 px-2 py-1.5 ${granularity === g ? "bg-primary text-primary-foreground" : "bg-card hover:bg-secondary/40"}`}>
+                  {g === "daily" ? "Diário" : g === "weekly" ? "Semanal" : "Mensal"}
+                </button>
+              ))}
+            </div>
+          </div>
         </div>
-        <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className="rounded-md border border-border bg-input px-3 py-2 text-sm">
-          <option value="">Todas as contas (USD)</option>
-          {data?.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-        </select>
+
+        {data && (
+          <div className="rounded-xl border border-border bg-card overflow-hidden">
+            <div className="text-center text-xs uppercase tracking-widest text-muted-foreground py-2 border-b border-border bg-secondary/30">
+              Situação projetada
+            </div>
+            <SidebarLine label="Saldo anterior" value={data.opening} currency={data.currency} />
+            <SidebarLine label="Receitas" value={data.totals.income} currency={data.currency} positive />
+            <SidebarLine label="Transferências de entrada" value={data.totals.transferIn} currency={data.currency} positive />
+            <SidebarLine label="Despesas" value={-data.totals.expense} currency={data.currency} negative />
+            <SidebarLine label="Transferências de saída" value={-data.totals.transferOut} currency={data.currency} negative />
+            <SidebarLine label="Resultado" value={data.totals.net} currency={data.currency} bold accent={data.totals.net >= 0 ? "positive" : "negative"} />
+            <SidebarLine label="Saldo final" value={data.closing} currency={data.currency} bold accent={data.closing >= 0 ? "positive" : "negative"} />
+          </div>
+        )}
       </div>
 
-      {data && (
-        <div className="grid sm:grid-cols-4 gap-3">
-          <Stat label="Saldo inicial" value={formatCurrency(data.opening, data.currency)} />
-          <Stat label="Entradas" value={formatCurrency(data.periods.reduce((s, p) => s + p.income, 0), data.currency)} accent="text-success" />
-          <Stat label="Saídas" value={formatCurrency(data.periods.reduce((s, p) => s + p.expense, 0), data.currency)} accent="text-destructive" />
-          <Stat label="Saldo final" value={formatCurrency(data.closing, data.currency)} accent={data.closing >= 0 ? "text-success" : "text-destructive"} />
+      {/* Main extract */}
+      <div className="rounded-xl border border-border bg-card overflow-hidden">
+        <div className="bg-secondary/30 px-4 py-2 text-xs uppercase tracking-widest text-muted-foreground grid grid-cols-[80px_1fr_140px_160px] gap-3">
+          <div>Data</div>
+          <div>Lançamento</div>
+          <div className="text-right">Valor</div>
+          <div className="text-right">Saldo acumulado</div>
         </div>
-      )}
 
-      <div className="rounded-xl border border-border bg-card overflow-hidden overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead className="bg-secondary/40 text-xs text-muted-foreground">
-            <tr>
-              <th className="text-left px-3 py-2">Período</th>
-              <th className="text-right px-3 py-2">#</th>
-              <th className="text-right px-3 py-2">Entradas</th>
-              <th className="text-right px-3 py-2">Saídas</th>
-              <th className="text-right px-3 py-2">Saldo</th>
-              <th className="text-right px-3 py-2">Acumulado</th>
-            </tr>
-          </thead>
-          <tbody>
-            {data && (
-              <tr className="border-t border-border bg-secondary/10 text-xs">
-                <td className="px-3 py-2 italic text-muted-foreground" colSpan={5}>Saldo inicial em {from}</td>
-                <td className="px-3 py-2 text-right tabular-nums font-medium">{formatCurrency(data.opening, data.currency)}</td>
-              </tr>
+        {/* Opening row */}
+        {data && (
+          <div className="grid grid-cols-[80px_1fr_140px_160px] gap-3 px-4 py-2 border-b border-border text-sm bg-secondary/10">
+            <div className="text-muted-foreground">{from.slice(8, 10)}/{from.slice(5, 7)}</div>
+            <div className="italic text-muted-foreground">Saldo anterior</div>
+            <div />
+            <div className={`text-right tabular-nums font-medium ${data.opening >= 0 ? "" : "text-destructive"}`}>
+              {formatCurrency(data.opening, data.currency)}
+            </div>
+          </div>
+        )}
+
+        {grouped.map((g) => (
+          <div key={g.key}>
+            {granularity !== "daily" && (
+              <div className="grid grid-cols-[80px_1fr_140px_160px] gap-3 px-4 py-1.5 bg-secondary/20 text-xs font-medium border-b border-border">
+                <div className="text-muted-foreground">{g.label}</div>
+                <div className="text-muted-foreground">{g.entries.length} {g.entries.length === 1 ? "lançamento" : "lançamentos"}</div>
+                <div className={`text-right tabular-nums ${g.subtotal >= 0 ? "text-success" : "text-destructive"}`}>
+                  {formatCurrency(g.subtotal, data!.currency)}
+                </div>
+                <div />
+              </div>
             )}
-            {data?.periods.map((p) => {
-              const isOpen = !!expanded[p.key];
+            {g.entries.map((t) => {
+              const acc = data?.accounts.find((a) => a.id === t.account_id);
               return (
-                <FragmentLedger key={p.key} period={p} isOpen={isOpen}
-                  onToggle={() => setExpanded((s) => ({ ...s, [p.key]: !s[p.key] }))}
-                  currency={data.currency}
-                  accounts={data.accounts}
-                />
+                <div key={t.id} className="grid grid-cols-[80px_1fr_140px_160px] gap-3 px-4 py-2 border-b border-border/60 hover:bg-secondary/20 text-sm">
+                  <div className="text-muted-foreground whitespace-nowrap">{t.date.slice(8, 10)}/{t.date.slice(5, 7)}</div>
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className={`inline-block h-2 w-2 rounded-full ${t.is_transfer ? "bg-amber-400" : Number(t.amount) >= 0 ? "bg-success" : "bg-destructive"}`} />
+                      <span className="font-medium truncate">{t.merchant}</span>
+                      {t.is_transfer && <Badge variant="outline" className="text-[10px]">transf.</Badge>}
+                    </div>
+                    <div className="text-xs text-muted-foreground pl-4">
+                      {t.category_name ?? "Sem categoria"}{acc ? ` · ${acc.name}` : ""}
+                    </div>
+                  </div>
+                  <div className={`text-right tabular-nums self-center ${Number(t.amount) < 0 ? "text-destructive" : "text-success"}`}>
+                    {formatCurrency(Number(t.amount), data!.currency)}
+                  </div>
+                  <div className={`text-right tabular-nums self-center font-medium ${Number(t.balance) < 0 ? "text-destructive" : ""}`}>
+                    {formatCurrency(Number(t.balance), data!.currency)}
+                  </div>
+                </div>
               );
             })}
-            {data && data.periods.length === 0 && (
-              <tr><td colSpan={6} className="p-8 text-center text-muted-foreground text-sm">Nenhum lançamento neste período.</td></tr>
-            )}
-          </tbody>
-        </table>
+          </div>
+        ))}
+
+        {data && data.entries.length === 0 && (
+          <div className="p-8 text-center text-sm text-muted-foreground">Nenhum lançamento neste período.</div>
+        )}
         {isLoading && <div className="p-4 text-center text-xs text-muted-foreground">Carregando…</div>}
+
+        {/* Closing row */}
+        {data && data.entries.length > 0 && (
+          <div className="grid grid-cols-[80px_1fr_140px_160px] gap-3 px-4 py-2.5 bg-secondary/20 text-sm font-medium">
+            <div className="text-muted-foreground">{to.slice(8, 10)}/{to.slice(5, 7)}</div>
+            <div>Saldo final</div>
+            <div />
+            <div className={`text-right tabular-nums ${data.closing >= 0 ? "" : "text-destructive"}`}>
+              {formatCurrency(data.closing, data.currency)}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
 }
 
-function FragmentLedger({ period, isOpen, onToggle, currency, accounts }: {
-  period: any; isOpen: boolean; onToggle: () => void; currency: string; accounts: any[];
+function SidebarLine({ label, value, currency, positive, negative, bold, accent }: {
+  label: string; value: number; currency: string;
+  positive?: boolean; negative?: boolean; bold?: boolean;
+  accent?: "positive" | "negative";
 }) {
+  const cls = accent === "positive" ? "text-success" : accent === "negative" ? "text-destructive"
+    : positive ? "text-success" : negative ? "text-destructive" : "";
   return (
-    <>
-      <tr className="border-t border-border hover:bg-secondary/20 cursor-pointer" onClick={onToggle}>
-        <td className="px-3 py-2 font-medium">
-          <button className="inline-flex items-center gap-1.5">
-            {isOpen ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
-            {period.label}
-          </button>
-        </td>
-        <td className="px-3 py-2 text-right text-muted-foreground tabular-nums">{period.count}</td>
-        <td className="px-3 py-2 text-right tabular-nums text-success">{period.income > 0 ? formatCurrency(period.income, currency) : "—"}</td>
-        <td className="px-3 py-2 text-right tabular-nums text-destructive">{period.expense > 0 ? formatCurrency(period.expense, currency) : "—"}</td>
-        <td className={`px-3 py-2 text-right tabular-nums ${period.net >= 0 ? "text-success" : "text-destructive"}`}>
-          {formatCurrency(period.net, currency)}
-        </td>
-        <td className={`px-3 py-2 text-right tabular-nums font-medium ${period.balance >= 0 ? "" : "text-destructive"}`}>
-          {formatCurrency(period.balance, currency)}
-        </td>
-      </tr>
-      {isOpen && period.transactions.map((t: any) => {
-        const acc = accounts.find((a: any) => a.id === t.account_id);
-        return (
-          <tr key={t.id} className="border-t border-border/40 bg-secondary/5 text-xs">
-            <td className="px-3 py-1.5 pl-8 text-muted-foreground whitespace-nowrap">{formatDate(t.date)}</td>
-            <td className="px-3 py-1.5" colSpan={2}>
-              <span className="font-medium">{t.merchant}</span>
-              {acc && <span className="ml-2 text-muted-foreground">· {acc.name}</span>}
-            </td>
-            <td className="px-3 py-1.5" />
-            <td className={`px-3 py-1.5 text-right tabular-nums ${Number(t.amount) < 0 ? "text-destructive" : "text-success"}`}>
-              {formatCurrency(Number(t.amount), currency)}
-            </td>
-            <td className="px-3 py-1.5" />
-          </tr>
-        );
-      })}
-    </>
-  );
-}
-
-function Stat({ label, value, accent }: { label: string; value: string; accent?: string }) {
-  return (
-    <div className="rounded-xl border border-border bg-card p-4">
-      <div className="text-xs uppercase tracking-widest text-muted-foreground">{label}</div>
-      <div className={`mt-1 text-xl font-semibold ${accent ?? ""}`}>{value}</div>
+    <div className={`flex items-center justify-between px-4 py-1.5 text-sm border-b border-border/60 last:border-b-0 ${bold ? "font-semibold bg-secondary/10" : ""}`}>
+      <span className="text-muted-foreground">{label}</span>
+      <span className={`tabular-nums ${cls}`}>{formatCurrency(value, currency)}</span>
     </div>
   );
 }
