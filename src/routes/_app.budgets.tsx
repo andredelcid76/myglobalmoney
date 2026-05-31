@@ -1,11 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { listBudgetsYear, upsertBudget, applyBudgetToYear, deleteBudget } from "@/lib/finance.functions";
+import { listBudgetsYear, upsertBudget, applyBudgetToYear, deleteBudget, getBudgetSuggestions, reallocateBudget, bulkUpsertBudgets } from "@/lib/finance.functions";
 import { formatCurrency } from "@/lib/format";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, ChevronRight, ChevronDown, ChevronRightIcon, Copy, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, ChevronRightIcon, Copy, Trash2, Wand2, ArrowLeftRight, Sparkles } from "lucide-react";
 import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
@@ -28,11 +28,18 @@ function BudgetsPage() {
   const upsert = useServerFn(upsertBudget);
   const applyAll = useServerFn(applyBudgetToYear);
   const del = useServerFn(deleteBudget);
+  const fetchSugg = useServerFn(getBudgetSuggestions);
+  const realloc = useServerFn(reallocateBudget);
+  const bulk = useServerFn(bulkUpsertBudgets);
   const qc = useQueryClient();
 
   const { data } = useQuery({
     queryKey: ["budgets-year", year],
     queryFn: () => fetchYear({ data: { year } }),
+  });
+  const { data: sugg } = useQuery({
+    queryKey: ["budget-suggestions", 6],
+    queryFn: () => fetchSugg({ data: { months: 6 } }),
   });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["budgets-year", year] });
@@ -48,6 +55,14 @@ function BudgetsPage() {
   });
   const delMut = useMutation({
     mutationFn: (v: { category_id: string; month: string }) => del({ data: v }),
+    onSuccess: invalidate,
+  });
+  const reallocMut = useMutation({
+    mutationFn: (v: { from_category_id: string; to_category_id: string; month: string; amount_usd: number }) => realloc({ data: v }),
+    onSuccess: invalidate,
+  });
+  const bulkMut = useMutation({
+    mutationFn: (items: { category_id: string; month: string; amount_usd: number; budget_type: BudgetType; rollover_enabled: boolean }[]) => bulk({ data: { items } }),
     onSuccess: invalidate,
   });
 
@@ -134,6 +149,38 @@ function BudgetsPage() {
     return { groups, monthlyTotals, monthlySpent };
   }, [data]);
 
+  const suggStats = sugg?.stats ?? {};
+  const allCategories = (data?.categories ?? []) as any[];
+
+  function applySuggestionsToYear(useMedian: boolean) {
+    // Apply median (or avg) of last 6 months to every leaf category, every month of `year`,
+    // only filling cells that are currently empty (null) to preserve manual edits.
+    const items: { category_id: string; month: string; amount_usd: number; budget_type: BudgetType; rollover_enabled: boolean }[] = [];
+    const budgetSet = new Set(
+      (data?.budgets ?? []).map((b: any) => `${b.category_id}|${(b.month as string).slice(0, 7)}`)
+    );
+    for (const c of allCategories) {
+      if (c.is_income || c.is_transfer) continue;
+      const s = suggStats[c.id];
+      if (!s) continue;
+      const amt = Math.round((useMedian ? s.median : s.avg) * 100) / 100;
+      if (amt <= 0) continue;
+      for (let m = 0; m < 12; m++) {
+        const monthKeyShort = `${year}-${String(m + 1).padStart(2, "0")}`;
+        if (budgetSet.has(`${c.id}|${monthKeyShort}`)) continue;
+        items.push({
+          category_id: c.id,
+          month: monthKey(year, m),
+          amount_usd: amt,
+          budget_type: "flex",
+          rollover_enabled: false,
+        });
+      }
+    }
+    if (items.length === 0) return;
+    bulkMut.mutate(items);
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -141,7 +188,13 @@ function BudgetsPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Orçamentos {year}</h1>
           <p className="text-sm text-muted-foreground">Grid anual com tipos (fixo/variável/anual) e rollover</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <SuggestAllPopover onApply={applySuggestionsToYear} />
+          <ReallocatePopover
+            year={year}
+            categories={allCategories}
+            onSubmit={(v) => reallocMut.mutate(v)}
+          />
           <Button size="icon" variant="outline" onClick={() => setYear(year - 1)}><ChevronLeft className="h-4 w-4" /></Button>
           <div className="min-w-[80px] text-center text-sm font-medium">{year}</div>
           <Button size="icon" variant="outline" onClick={() => setYear(year + 1)}><ChevronRight className="h-4 w-4" /></Button>
@@ -173,6 +226,7 @@ function BudgetsPage() {
                   onToggle={() => setExpanded((s) => ({ ...s, [g.parent.id]: !s[g.parent.id] }))}
                   total={total}
                   year={year}
+                  suggStats={suggStats}
                   onUpsert={(v) => upsertMut.mutate(v)}
                   onDelete={(v) => delMut.mutate(v)}
                   onApplyYear={(v) => applyMut.mutate(v)}
