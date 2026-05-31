@@ -1,29 +1,47 @@
 import { Link, useLocation, useNavigate } from "@tanstack/react-router";
-import { LayoutDashboard, Receipt, PiggyBank, FolderTree, Wallet, Upload, TrendingUp, LogOut, DollarSign, Repeat, Target, CreditCard, Sparkles } from "lucide-react";
+import { LayoutDashboard, Receipt, PiggyBank, FolderTree, Wallet, Upload, TrendingUp, LogOut, Repeat, Target, CreditCard, Sparkles, Leaf, Search, Menu, X } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { getLatestUsdBrl } from "@/lib/fx.functions";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
-const nav = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, exact: true },
-  { to: "/transactions", label: "Transações", icon: Receipt },
-  { to: "/budgets", label: "Orçamentos", icon: PiggyBank },
-  { to: "/goals", label: "Metas", icon: Target },
-  { to: "/recurrences", label: "Recorrências", icon: Repeat },
-  { to: "/projections", label: "Projeções", icon: TrendingUp },
-  { to: "/credit-cards", label: "Cartões", icon: CreditCard },
-  { to: "/rules", label: "Regras & IA", icon: Sparkles },
-  { to: "/categories", label: "Categorias", icon: FolderTree },
-  { to: "/accounts", label: "Contas", icon: Wallet },
-  { to: "/import", label: "Importar CSV", icon: Upload },
+const navGroups: { label: string; items: { to: string; label: string; icon: any; exact?: boolean }[] }[] = [
+  {
+    label: "Visão geral",
+    items: [
+      { to: "/", label: "Dashboard", icon: LayoutDashboard, exact: true },
+      { to: "/transactions", label: "Transações", icon: Receipt },
+      { to: "/projections", label: "Projeções", icon: TrendingUp },
+    ],
+  },
+  {
+    label: "Planejamento",
+    items: [
+      { to: "/budgets", label: "Orçamentos", icon: PiggyBank },
+      { to: "/goals", label: "Metas", icon: Target },
+      { to: "/recurrences", label: "Recorrências", icon: Repeat },
+    ],
+  },
+  {
+    label: "Configuração",
+    items: [
+      { to: "/credit-cards", label: "Cartões", icon: CreditCard },
+      { to: "/accounts", label: "Contas", icon: Wallet },
+      { to: "/categories", label: "Categorias", icon: FolderTree },
+      { to: "/rules", label: "Regras & IA", icon: Sparkles },
+      { to: "/import", label: "Importar CSV", icon: Upload },
+    ],
+  },
 ];
+
+const flatNav = navGroups.flatMap((g) => g.items);
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { user, signOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [mobileOpen, setMobileOpen] = useState(false);
   const fetchFx = useServerFn(getLatestUsdBrl);
   const { data: fx } = useQuery({
     queryKey: ["fx", "USDBRL"],
@@ -31,72 +49,146 @@ export function AppShell({ children }: { children: ReactNode }) {
     staleTime: 1000 * 60 * 60,
   });
 
-  return (
-    <div className="flex min-h-screen bg-background text-foreground">
-      <aside className="hidden md:flex w-60 flex-col border-r border-sidebar-border bg-sidebar">
-        <div className="px-5 py-5 border-b border-sidebar-border">
-          <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-md grid place-items-center" style={{ background: "var(--gradient-primary)" }}>
-              <DollarSign className="h-4 w-4 text-primary-foreground" />
-            </div>
-            <div>
-              <div className="font-semibold tracking-tight">My Global Money</div>
-              <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Finance OS</div>
+  const isActive = (to: string, exact?: boolean) =>
+    exact ? location.pathname === to : location.pathname.startsWith(to);
+
+  const currentTitle =
+    flatNav.find((n) => isActive(n.to, n.exact))?.label ?? "My Global Money";
+
+  const initials = (user?.email ?? "?")
+    .split("@")[0]
+    .slice(0, 2)
+    .toUpperCase();
+
+  const Sidebar = (
+    <>
+      <div className="px-5 py-5 border-b border-sidebar-border">
+        <Link to="/" className="flex items-center gap-2.5 group">
+          <div
+            className="h-9 w-9 rounded-xl grid place-items-center shadow-sm ring-1 ring-black/5"
+            style={{ background: "var(--gradient-primary)" }}
+          >
+            <Leaf className="h-4 w-4 text-primary-foreground" strokeWidth={2.5} />
+          </div>
+          <div className="leading-tight">
+            <div className="font-semibold tracking-tight text-[15px]">My Global Money</div>
+            <div className="text-[10px] uppercase tracking-[0.14em] text-muted-foreground">
+              Finance OS
             </div>
           </div>
-        </div>
-        <nav className="flex-1 p-3 space-y-1">
-          {nav.map((n) => {
-            const active = n.exact ? location.pathname === n.to : location.pathname.startsWith(n.to);
-            return (
-              <Link
-                key={n.to}
-                to={n.to}
-                className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm transition ${
-                  active
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground shadow-sm"
-                    : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-foreground"
-                }`}
-              >
-                <n.icon className="h-4 w-4" />
-                {n.label}
-              </Link>
-            );
-          })}
-        </nav>
-        <div className="p-3 border-t border-sidebar-border space-y-2">
-          {fx && (
-            <div className="px-3 py-2 rounded-md bg-sidebar-accent/40 text-xs">
-              <div className="text-muted-foreground">USD/BRL</div>
-              <div className="font-semibold">R$ {fx.rate.toFixed(4)}</div>
-              <div className="text-[10px] text-muted-foreground">{fx.date}</div>
+        </Link>
+      </div>
+      <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-5">
+        {navGroups.map((group) => (
+          <div key={group.label} className="space-y-1">
+            <div className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/80">
+              {group.label}
             </div>
-          )}
-          <div className="text-xs text-muted-foreground px-3 truncate">{user?.email}</div>
-          <button
-            onClick={async () => { await signOut(); navigate({ to: "/login" }); }}
-            className="w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm text-sidebar-foreground/80 hover:bg-sidebar-accent hover:text-sidebar-foreground"
-          >
-            <LogOut className="h-4 w-4" /> Sair
-          </button>
+            {group.items.map((n) => {
+              const active = isActive(n.to, n.exact);
+              return (
+                <Link
+                  key={n.to}
+                  to={n.to}
+                  onClick={() => setMobileOpen(false)}
+                  className={`relative flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all ${
+                    active
+                      ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+                      : "text-sidebar-foreground/75 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground"
+                  }`}
+                >
+                  {active && (
+                    <span className="absolute left-0 top-1.5 bottom-1.5 w-0.5 rounded-r bg-primary" />
+                  )}
+                  <n.icon className="h-4 w-4 shrink-0" strokeWidth={active ? 2.25 : 2} />
+                  <span className="truncate">{n.label}</span>
+                </Link>
+              );
+            })}
+          </div>
+        ))}
+      </nav>
+      <div className="p-3 border-t border-sidebar-border space-y-3">
+        {fx && (
+          <div className="px-3 py-2.5 rounded-lg bg-sidebar-accent/40 text-xs">
+            <div className="flex items-center justify-between text-muted-foreground">
+              <span>USD/BRL</span>
+              <span className="text-[10px]">{fx.date}</span>
+            </div>
+            <div className="font-semibold text-sm mt-0.5 tabular-nums">R$ {fx.rate.toFixed(4)}</div>
+          </div>
+        )}
+        <div className="flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-sidebar-accent/40 transition-colors">
+          <div className="h-8 w-8 rounded-full bg-primary/15 text-primary grid place-items-center text-xs font-semibold">
+            {initials}
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="text-xs font-medium truncate">{user?.email}</div>
+            <button
+              onClick={async () => {
+                await signOut();
+                navigate({ to: "/login" });
+              }}
+              className="text-[11px] text-muted-foreground hover:text-foreground inline-flex items-center gap-1"
+            >
+              <LogOut className="h-3 w-3" /> Sair
+            </button>
+          </div>
         </div>
+      </div>
+    </>
+  );
+
+  return (
+    <div className="flex min-h-screen bg-background text-foreground">
+      <aside className="hidden md:flex w-64 flex-col border-r border-sidebar-border bg-sidebar sticky top-0 h-screen">
+        {Sidebar}
       </aside>
-      <main className="flex-1 min-w-0">
-        <div className="md:hidden flex items-center justify-between px-4 py-3 border-b border-border bg-sidebar">
-          <div className="font-semibold">My Global Money</div>
-          <button onClick={async () => { await signOut(); navigate({ to: "/login" }); }} className="text-sm text-muted-foreground">Sair</button>
+
+      {/* Mobile drawer */}
+      {mobileOpen && (
+        <div className="md:hidden fixed inset-0 z-50 flex">
+          <div
+            className="absolute inset-0 bg-foreground/30 backdrop-blur-sm"
+            onClick={() => setMobileOpen(false)}
+          />
+          <aside className="relative flex w-72 max-w-[85vw] flex-col bg-sidebar border-r border-sidebar-border shadow-xl">
+            <button
+              onClick={() => setMobileOpen(false)}
+              className="absolute top-4 right-4 h-8 w-8 grid place-items-center rounded-md hover:bg-sidebar-accent/60"
+              aria-label="Fechar menu"
+            >
+              <X className="h-4 w-4" />
+            </button>
+            {Sidebar}
+          </aside>
         </div>
-        <div className="md:hidden flex gap-1 overflow-x-auto px-2 py-2 border-b border-border bg-sidebar/50">
-          {nav.map((n) => {
-            const active = n.exact ? location.pathname === n.to : location.pathname.startsWith(n.to);
-            return (
-              <Link key={n.to} to={n.to} className={`shrink-0 px-3 py-1.5 rounded-md text-xs ${active ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}>
-                {n.label}
-              </Link>
-            );
-          })}
-        </div>
-        <div className="p-4 md:p-8 max-w-[1400px] mx-auto">{children}</div>
+      )}
+
+      <main className="flex-1 min-w-0 flex flex-col">
+        <header className="sticky top-0 z-30 flex items-center gap-3 px-4 md:px-8 h-14 border-b border-border bg-background/80 backdrop-blur-md">
+          <button
+            onClick={() => setMobileOpen(true)}
+            className="md:hidden h-9 w-9 grid place-items-center rounded-md hover:bg-muted"
+            aria-label="Abrir menu"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+          <div className="min-w-0">
+            <h1 className="text-sm md:text-base font-semibold tracking-tight truncate">
+              {currentTitle}
+            </h1>
+          </div>
+          <div className="ml-auto flex items-center gap-2">
+            {fx && (
+              <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-muted text-xs tabular-nums">
+                <span className="text-muted-foreground">USD/BRL</span>
+                <span className="font-semibold">{fx.rate.toFixed(4)}</span>
+              </div>
+            )}
+          </div>
+        </header>
+        <div className="flex-1 p-4 md:p-8 max-w-[1400px] w-full mx-auto">{children}</div>
       </main>
     </div>
   );
