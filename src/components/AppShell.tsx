@@ -38,7 +38,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               <DollarSign className="h-4 w-4 text-primary-foreground" />
             </div>
             <div>
-              <div className="font-semibold tracking-tight">Cofre</div>
+              <div className="font-semibold tracking-tight">My Global Money</div>
               <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Finance OS</div>
             </div>
           </div>
@@ -81,7 +81,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       </aside>
       <main className="flex-1 min-w-0">
         <div className="md:hidden flex items-center justify-between px-4 py-3 border-b border-border bg-sidebar">
-          <div className="font-semibold">Cofre</div>
+          <div className="font-semibold">My Global Money</div>
           <button onClick={async () => { await signOut(); navigate({ to: "/login" }); }} className="text-sm text-muted-foreground">Sair</button>
         </div>
         <div className="md:hidden flex gap-1 overflow-x-auto px-2 py-2 border-b border-border bg-sidebar/50">
