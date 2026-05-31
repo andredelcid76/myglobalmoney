@@ -355,13 +355,15 @@ export const getProjections = createServerFn({ method: "POST" })
     const now = new Date();
     const startHist = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 5, 1));
     const startStr = startHist.toISOString().slice(0, 10);
-    const [txRes, accountsRes, recsRes] = await Promise.all([
+    const [txRes, accountsRes, recsRes, budgetsRes] = await Promise.all([
       context.supabase.from("transactions").select("date, amount_usd").eq("user_id", context.userId).eq("is_transfer", false).gte("date", startStr),
       context.supabase.from("accounts").select("currency, initial_balance").eq("user_id", context.userId).eq("is_archived", false),
       context.supabase.from("recurrences").select("amount_usd, cadence, is_income, is_active, next_date").eq("user_id", context.userId).eq("is_active", true),
+      context.supabase.from("budgets").select("month, amount_usd, budget_type").eq("user_id", context.userId),
     ]);
     const tx = txRes.data ?? [];
     const recs = recsRes.data ?? [];
+    const budgets = budgetsRes.data ?? [];
     // Group historical tx by month
     const byMonth = new Map<string, { income: number; expense: number }>();
     for (const t of tx) {
@@ -404,18 +406,216 @@ export const getProjections = createServerFn({ method: "POST" })
       const monthly = Math.abs(Number(r.amount_usd)) * (cadenceFactor[r.cadence as string] ?? 1);
       if (r.is_income) recIncome += monthly; else recExpense += monthly;
     }
-    const useRecs = recs.length > 0;
-    const projIncome = useRecs ? recIncome : avgIncome;
-    const projExpense = useRecs ? recExpense : avgExpense;
 
-    const projection: { month: string; income: number; expense: number; net: number; cumulative: number }[] = [];
+    // Budgets by month-key (sum of all budgets for that month)
+    const budgetByMonth = new Map<string, { fixed: number; total: number }>();
+    for (const b of budgets) {
+      const mk = (b.month as string).slice(0, 7);
+      const v = budgetByMonth.get(mk) ?? { fixed: 0, total: 0 };
+      const amt = Number(b.amount_usd) || 0;
+      v.total += amt;
+      if (b.budget_type === "fixed") v.fixed += amt;
+      budgetByMonth.set(mk, v);
+    }
+
+    const projection: { month: string; income: number; expense: number; fixed: number; variable: number; net: number; cumulative: number }[] = [];
     let cumulative = currentNet;
     for (let i = 0; i < data.months; i++) {
       const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + i, 1));
       const key = d.toISOString().slice(0, 7);
-      const net = projIncome - projExpense;
+      const bm = budgetByMonth.get(key);
+      // Fixed = recurrences + budgeted fixed (no double-count safeguard: recurrences usually aren't budgeted)
+      const fixed = recExpense + (bm?.fixed ?? 0);
+      // Variable target = sum of non-fixed budgets if defined, else fallback to hist avg minus fixed
+      const variableBudgeted = bm ? Math.max(0, bm.total - bm.fixed) : 0;
+      const variable = bm ? variableBudgeted : Math.max(0, avgExpense - fixed);
+      const expense = fixed + variable;
+      const income = recs.length > 0 ? Math.max(recIncome, avgIncome) : avgIncome;
+      const net = income - expense;
       cumulative += net;
-      projection.push({ month: key, income: projIncome, expense: projExpense, net, cumulative });
+      projection.push({ month: key, income, expense, fixed, variable, net, cumulative });
     }
-    return { currentNet, avgIncome, avgExpense, history, projection, basis: useRecs ? "recurrences" : "average", recurrencesCount: recs.length };
+    return { currentNet, avgIncome, avgExpense, history, projection, basis: recs.length > 0 ? "recurrences+budgets" : "average", recurrencesCount: recs.length };
+  });
+
+// ---------- Cashflow (weekly/monthly/quarterly) ----------
+function startOfWeekUTC(d: Date) {
+  const dd = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const dow = dd.getUTCDay(); // 0 Sun
+  const diff = (dow + 6) % 7; // monday
+  dd.setUTCDate(dd.getUTCDate() - diff);
+  return dd;
+}
+function addDaysUTC(d: Date, n: number) {
+  const dd = new Date(d.getTime());
+  dd.setUTCDate(dd.getUTCDate() + n);
+  return dd;
+}
+function cadenceDays(c: string): number {
+  return ({ weekly: 7, biweekly: 14, monthly: 30, quarterly: 91, yearly: 365 } as Record<string, number>)[c] ?? 30;
+}
+function advanceByCadence(d: Date, c: string): Date {
+  const dd = new Date(d.getTime());
+  if (c === "weekly") dd.setUTCDate(dd.getUTCDate() + 7);
+  else if (c === "biweekly") dd.setUTCDate(dd.getUTCDate() + 14);
+  else if (c === "monthly") dd.setUTCMonth(dd.getUTCMonth() + 1);
+  else if (c === "quarterly") dd.setUTCMonth(dd.getUTCMonth() + 3);
+  else if (c === "yearly") dd.setUTCFullYear(dd.getUTCFullYear() + 1);
+  return dd;
+}
+
+export const getCashflow = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({
+    granularity: z.enum(["weekly", "monthly", "quarterly"]).default("monthly"),
+    periods: z.number().int().min(2).max(52).default(12),
+  }).parse(d))
+  .handler(async ({ data, context }) => {
+    const now = new Date();
+    const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+
+    // Build period buckets starting from current period
+    const buckets: { start: Date; end: Date; label: string; days: number }[] = [];
+    if (data.granularity === "weekly") {
+      let cur = startOfWeekUTC(today);
+      for (let i = 0; i < data.periods; i++) {
+        const end = addDaysUTC(cur, 6);
+        buckets.push({ start: cur, end, days: 7, label: `${cur.toISOString().slice(5, 10)}` });
+        cur = addDaysUTC(cur, 7);
+      }
+    } else if (data.granularity === "monthly") {
+      for (let i = 0; i < data.periods; i++) {
+        const s = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + i, 1));
+        const e = new Date(Date.UTC(s.getUTCFullYear(), s.getUTCMonth() + 1, 0));
+        const days = Math.round((e.getTime() - s.getTime()) / 86400000) + 1;
+        buckets.push({ start: s, end: e, days, label: s.toISOString().slice(0, 7) });
+      }
+    } else {
+      // quarterly: anchor to current quarter start
+      const qMonth = Math.floor(now.getUTCMonth() / 3) * 3;
+      for (let i = 0; i < data.periods; i++) {
+        const s = new Date(Date.UTC(now.getUTCFullYear(), qMonth + i * 3, 1));
+        const e = new Date(Date.UTC(s.getUTCFullYear(), s.getUTCMonth() + 3, 0));
+        const days = Math.round((e.getTime() - s.getTime()) / 86400000) + 1;
+        const q = Math.floor(s.getUTCMonth() / 3) + 1;
+        buckets.push({ start: s, end: e, days, label: `${s.getUTCFullYear()} Q${q}` });
+      }
+    }
+
+    const horizonEnd = buckets[buckets.length - 1].end;
+    const histStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 3, 1));
+    const histStartStr = histStart.toISOString().slice(0, 10);
+
+    const [txRes, accRes, recsRes, budgetsRes, allTxRes] = await Promise.all([
+      context.supabase.from("transactions").select("date, amount_usd").eq("user_id", context.userId).eq("is_transfer", false).gte("date", histStartStr),
+      context.supabase.from("accounts").select("initial_balance").eq("user_id", context.userId).eq("is_archived", false),
+      context.supabase.from("recurrences").select("name, amount_usd, cadence, is_income, next_date, is_active").eq("user_id", context.userId).eq("is_active", true),
+      context.supabase.from("budgets").select("month, amount_usd, budget_type"),
+      context.supabase.from("transactions").select("amount_usd").eq("user_id", context.userId),
+    ]);
+    const hist = txRes.data ?? [];
+    const recs = recsRes.data ?? [];
+    const budgets = (budgetsRes.data ?? []).filter((b: any) => true);
+
+    // Historical daily average expense (last 3 closed months)
+    const histDays = Math.max(1, Math.round((today.getTime() - histStart.getTime()) / 86400000));
+    let histIncome = 0, histExpense = 0;
+    for (const t of hist) {
+      const amt = Number(t.amount_usd);
+      if (amt >= 0) histIncome += amt; else histExpense += -amt;
+    }
+    const avgIncomePerDay = histIncome / histDays;
+    const avgExpensePerDay = histExpense / histDays;
+
+    // Current net worth (USD): initial balances + sum of all amount_usd
+    const initial = (accRes.data ?? []).reduce((s, a) => s + Number(a.initial_balance ?? 0), 0);
+    const allTxSum = (allTxRes.data ?? []).reduce((s, t) => s + Number(t.amount_usd ?? 0), 0);
+    const currentNet = initial + allTxSum;
+
+    // Build occurrences for each recurrence within horizon
+    type Occ = { date: Date; amount: number; isIncome: boolean; name: string };
+    const occurrences: Occ[] = [];
+    for (const r of recs) {
+      const cad = r.cadence as string;
+      let d = new Date((r.next_date as string) + "T00:00:00Z");
+      // Roll forward to first bucket start if behind
+      while (d < buckets[0].start) d = advanceByCadence(d, cad);
+      // Safety cap
+      let guard = 0;
+      while (d <= horizonEnd && guard < 500) {
+        occurrences.push({
+          date: d,
+          amount: Math.abs(Number(r.amount_usd)),
+          isIncome: !!r.is_income,
+          name: r.name as string,
+        });
+        d = advanceByCadence(d, cad);
+        guard++;
+      }
+    }
+
+    // Budgeted fixed totals by month-key
+    const fixedByMonth = new Map<string, number>();
+    const variableBudgetByMonth = new Map<string, number>();
+    for (const b of budgets) {
+      const mk = (b.month as string).slice(0, 7);
+      const amt = Number(b.amount_usd) || 0;
+      if (b.budget_type === "fixed") {
+        fixedByMonth.set(mk, (fixedByMonth.get(mk) ?? 0) + amt);
+      } else {
+        variableBudgetByMonth.set(mk, (variableBudgetByMonth.get(mk) ?? 0) + amt);
+      }
+    }
+
+    let cumulative = currentNet;
+    const series = buckets.map((b) => {
+      const inOcc = occurrences.filter((o) => o.date >= b.start && o.date <= b.end);
+      const recIncome = inOcc.filter((o) => o.isIncome).reduce((s, o) => s + o.amount, 0);
+      const recExpense = inOcc.filter((o) => !o.isIncome).reduce((s, o) => s + o.amount, 0);
+
+      // Apportion budgets across overlap (for weekly buckets, slice month by days)
+      let budgetFixed = 0;
+      let budgetVariable = 0;
+      // iterate months that overlap this bucket
+      const monthCursor = new Date(Date.UTC(b.start.getUTCFullYear(), b.start.getUTCMonth(), 1));
+      while (monthCursor <= b.end) {
+        const mEnd = new Date(Date.UTC(monthCursor.getUTCFullYear(), monthCursor.getUTCMonth() + 1, 0));
+        const overlapStart = monthCursor > b.start ? monthCursor : b.start;
+        const overlapEnd = mEnd < b.end ? mEnd : b.end;
+        const overlapDays = Math.max(0, Math.round((overlapEnd.getTime() - overlapStart.getTime()) / 86400000) + 1);
+        const monthDays = Math.round((mEnd.getTime() - monthCursor.getTime()) / 86400000) + 1;
+        const mk = monthCursor.toISOString().slice(0, 7);
+        budgetFixed += (fixedByMonth.get(mk) ?? 0) * (overlapDays / monthDays);
+        budgetVariable += (variableBudgetByMonth.get(mk) ?? 0) * (overlapDays / monthDays);
+        monthCursor.setUTCMonth(monthCursor.getUTCMonth() + 1);
+      }
+
+      const fixed = recExpense + budgetFixed;
+      // Variable: prefer budget; fallback to hist avg (minus fixed already covered)
+      const histExpBucket = avgExpensePerDay * b.days;
+      const variable = budgetVariable > 0 ? budgetVariable : Math.max(0, histExpBucket - fixed);
+      const expense = fixed + variable;
+
+      // Income: recurring + uncovered hist avg
+      const histIncBucket = avgIncomePerDay * b.days;
+      const income = Math.max(recIncome, histIncBucket);
+
+      const net = income - expense;
+      cumulative += net;
+      return {
+        label: b.label,
+        start: b.start.toISOString().slice(0, 10),
+        end: b.end.toISOString().slice(0, 10),
+        income, fixed, variable, expense, net, cumulative,
+        recCount: inOcc.length,
+      };
+    });
+
+    // Upcoming recurrences list (next 30 in horizon)
+    const upcoming = occurrences
+      .sort((a, b) => a.date.getTime() - b.date.getTime())
+      .slice(0, 30)
+      .map((o) => ({ date: o.date.toISOString().slice(0, 10), name: o.name, amount: o.amount, isIncome: o.isIncome }));
+
+    return { series, upcoming, currentNet, avgExpensePerDay, avgIncomePerDay };
   });
