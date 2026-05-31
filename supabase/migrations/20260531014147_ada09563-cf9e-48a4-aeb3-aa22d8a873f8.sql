@@ -1,0 +1,5 @@
+
+ALTER TABLE public.accounts
+  ADD COLUMN IF NOT EXISTS closing_day INTEGER,
+  ADD COLUMN IF NOT EXISTS due_day INTEGER,
+  ADD COLUMN IF NOT EXISTS credit_limit_usd NUMERIC;

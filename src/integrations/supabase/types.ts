@@ -16,9 +16,12 @@ export type Database = {
     Tables: {
       accounts: {
         Row: {
+          closing_day: number | null
           color: string | null
           created_at: string
+          credit_limit_usd: number | null
           currency: string
+          due_day: number | null
           id: string
           initial_balance: number
           institution: string | null
@@ -29,9 +32,12 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          closing_day?: number | null
           color?: string | null
           created_at?: string
+          credit_limit_usd?: number | null
           currency?: string
+          due_day?: number | null
           id?: string
           initial_balance?: number
           institution?: string | null
@@ -42,9 +48,12 @@ export type Database = {
           user_id: string
         }
         Update: {
+          closing_day?: number | null
           color?: string | null
           created_at?: string
+          credit_limit_usd?: number | null
           currency?: string
+          due_day?: number | null
           id?: string
           initial_balance?: number
           institution?: string | null
