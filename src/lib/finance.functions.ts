@@ -28,12 +28,14 @@ export const listTransactions = createServerFn({ method: "POST" })
     accountId: z.string().optional(),
     categoryId: z.string().optional(),
     search: z.string().optional(),
+    tag: z.string().optional(),
   }).parse(d))
   .handler(async ({ data, context }) => {
     let q = context.supabase.from("transactions").select("*").eq("user_id", context.userId).order("date", { ascending: false }).limit(data.limit);
     if (data.accountId) q = q.eq("account_id", data.accountId);
     if (data.categoryId) q = q.eq("category_id", data.categoryId);
     if (data.search) q = q.ilike("merchant", `%${data.search}%`);
+    if (data.tag) q = q.contains("tags", [data.tag]);
     const [tx, accounts, categories] = await Promise.all([
       q,
       context.supabase.from("accounts").select("id,name,currency,color").eq("user_id", context.userId),
