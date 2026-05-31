@@ -153,6 +153,42 @@ export type Database = {
           },
         ]
       }
+      categorization_rules: {
+        Row: {
+          category_id: string
+          created_at: string
+          id: string
+          is_active: boolean
+          match_type: string
+          pattern: string
+          priority: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          category_id: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          match_type?: string
+          pattern: string
+          priority?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          category_id?: string
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          match_type?: string
+          pattern?: string
+          priority?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       exchange_rates: {
         Row: {
           base: string
