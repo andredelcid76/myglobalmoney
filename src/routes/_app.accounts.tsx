@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { listAccounts, upsertAccount } from "@/lib/finance.functions";
 import { formatCurrency } from "@/lib/format";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Plus, Archive, ArchiveRestore } from "lucide-react";
@@ -31,6 +31,26 @@ function AccountsPage() {
   const qc = useQueryClient();
   const { data } = useQuery({ queryKey: ["accounts"], queryFn: () => fetchAccounts() });
   const [form, setForm] = useState<Form | null>(null);
+
+  // Open edit dialog from #edit-<accountId> (used by Credit Cards page)
+  useEffect(() => {
+    if (!data?.accounts || typeof window === "undefined") return;
+    const hash = window.location.hash;
+    const m = hash.match(/^#edit-([0-9a-f-]+)$/i);
+    if (!m) return;
+    const a = data.accounts.find((x: any) => x.id === m[1]);
+    if (a) {
+      setForm({
+        id: a.id, name: a.name, type: a.type as Form["type"], currency: a.currency as Form["currency"],
+        institution: a.institution ?? "", color: a.color ?? "#4f46e5",
+        initial_balance: Number(a.initial_balance),
+        closing_day: a.closing_day ?? null,
+        due_day: a.due_day ?? null,
+        credit_limit_usd: a.credit_limit_usd != null ? Number(a.credit_limit_usd) : null,
+      });
+      history.replaceState(null, "", window.location.pathname);
+    }
+  }, [data]);
 
   const save = useMutation({
     mutationFn: (v: Form) => upsert({ data: {

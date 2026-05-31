@@ -1,11 +1,12 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { getCreditCardStatements } from "@/lib/creditcards.functions";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { useState } from "react";
-import { CreditCard, AlertCircle, Calendar, ChevronDown, ChevronRight } from "lucide-react";
+import { CreditCard, AlertCircle, Calendar, ChevronDown, ChevronRight, Settings2, Pencil } from "lucide-react";
 import { Progress } from "@/components/ui/progress";
+import { Button } from "@/components/ui/button";
 
 export const Route = createFileRoute("/_app/credit-cards")({ component: CardsPage });
 
@@ -43,6 +44,8 @@ function CardsPage() {
 function CardItem({ card }: { card: any }) {
   const [expanded, setExpanded] = useState<number | null>(1); // current open by default
   const a = card.account;
+  const navigate = useNavigate();
+  const openEdit = () => navigate({ to: "/accounts", hash: `edit-${a.id}` });
 
   const today = new Date();
   const dueDate = card.nextDue ? new Date(card.nextDue + "T00:00:00") : null;
@@ -61,11 +64,16 @@ function CardItem({ card }: { card: any }) {
               <div className="text-xs text-muted-foreground">{a.institution} · {a.currency}</div>
             </div>
           </div>
-          {!card.configured && (
-            <div className="flex items-center gap-1 text-xs text-amber-500">
-              <AlertCircle className="h-3 w-3" /> Configure fatura
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            {!card.configured && (
+              <div className="hidden sm:flex items-center gap-1 text-xs text-amber-500">
+                <AlertCircle className="h-3 w-3" /> Configure fatura
+              </div>
+            )}
+            <Button size="sm" variant={card.configured ? "ghost" : "default"} onClick={openEdit}>
+              {card.configured ? <><Pencil className="h-3.5 w-3.5 mr-1" /> Editar</> : <><Settings2 className="h-3.5 w-3.5 mr-1" /> Configurar</>}
+            </Button>
+          </div>
         </div>
 
         {card.configured ? (
@@ -99,7 +107,7 @@ function CardItem({ card }: { card: any }) {
           </div>
         ) : (
           <div className="mt-3 text-xs text-muted-foreground">
-            Defina dia de fechamento e vencimento em Contas → Editar para habilitar a gestão de fatura.
+            Defina dia de fechamento, vencimento e (opcional) limite para habilitar a gestão de fatura.
           </div>
         )}
       </div>

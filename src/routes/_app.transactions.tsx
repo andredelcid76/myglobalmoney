@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { listTransactions, updateTxCategory } from "@/lib/finance.functions";
+import { listTransactions, updateTxCategory, bulkUpdateTxCategory } from "@/lib/finance.functions";
 import { splitTransaction, unsplitTransaction, updateTxTags, listAllTags } from "@/lib/splits.functions";
 import { getLedgerView } from "@/lib/ledger.functions";
 import { formatCurrency, formatDate } from "@/lib/format";
@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Split, Tag as TagIcon, X, Undo2, Plus, Trash2, ChevronLeft, ChevronRight as ChevronRightIcon } from "lucide-react";
+import { Split, Tag as TagIcon, X, Undo2, Plus, Trash2, ChevronLeft, ChevronRight as ChevronRightIcon, CheckSquare } from "lucide-react";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -38,8 +38,11 @@ function TxListView() {
   const [tag, setTag] = useState<string>("");
   const [splitTx, setSplitTx] = useState<any | null>(null);
   const [tagsTx, setTagsTx] = useState<any | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkCat, setBulkCat] = useState<string>("");
   const fetchTx = useServerFn(listTransactions);
   const updateCat = useServerFn(updateTxCategory);
+  const bulkUpdate = useServerFn(bulkUpdateTxCategory);
   const fetchTags = useServerFn(listAllTags);
   const unsplit = useServerFn(unsplitTransaction);
   const qc = useQueryClient();
@@ -64,6 +67,30 @@ function TxListView() {
     },
     onError: (e: any) => toast.error(e.message),
   });
+  const mBulk = useMutation({
+    mutationFn: (categoryId: string | null) => bulkUpdate({ data: { ids: Array.from(selected), categoryId } }),
+    onSuccess: (r) => {
+      toast.success(`${r.updated} lançamentos atualizados`);
+      setSelected(new Set());
+      setBulkCat("");
+      qc.invalidateQueries({ queryKey: ["tx"] });
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  const txList = data?.transactions ?? [];
+  const allSelected = txList.length > 0 && txList.every((t) => selected.has(t.id));
+  const toggleAll = () => {
+    if (allSelected) setSelected(new Set());
+    else setSelected(new Set(txList.map((t) => t.id)));
+  };
+  const toggleOne = (id: string) => {
+    setSelected((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  };
 
   return (
     <div className="space-y-4">
@@ -78,10 +105,37 @@ function TxListView() {
           {tagsData?.tags.map((t) => <option key={t.name} value={t.name}>#{t.name} ({t.count})</option>)}
         </select>
       </div>
+
+      {selected.size > 0 && (
+        <div className="sticky top-14 z-20 rounded-xl border border-primary/30 bg-primary/5 px-3 py-2 flex flex-wrap items-center gap-2">
+          <CheckSquare className="h-4 w-4 text-primary" />
+          <span className="text-sm font-medium">{selected.size} selecionado{selected.size === 1 ? "" : "s"}</span>
+          <span className="text-xs text-muted-foreground mx-1">·</span>
+          <span className="text-xs text-muted-foreground">Alterar categoria para:</span>
+          <select value={bulkCat} onChange={(e) => setBulkCat(e.target.value)} className="rounded-md border border-border bg-input px-2 py-1 text-sm">
+            <option value="">— escolha —</option>
+            <option value="__none__">Sem categoria</option>
+            {data?.categories.map((c) => (
+              <option key={c.id} value={c.id}>{c.parent_id ? "  ↳ " : ""}{c.name}</option>
+            ))}
+          </select>
+          <Button size="sm" disabled={!bulkCat || mBulk.isPending}
+            onClick={() => mBulk.mutate(bulkCat === "__none__" ? null : bulkCat)}>
+            Aplicar
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
+            Limpar seleção
+          </Button>
+        </div>
+      )}
+
       <div className="rounded-xl border border-border bg-card overflow-hidden overflow-x-auto">
         <table className="w-full text-sm">
           <thead className="bg-secondary/40 text-xs text-muted-foreground">
             <tr>
+              <th className="px-3 py-2 w-8">
+                <input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="Selecionar todos" />
+              </th>
               <th className="text-left px-3 py-2">Data</th>
               <th className="text-left px-3 py-2">Merchant</th>
               <th className="text-left px-3 py-2">Categoria</th>
@@ -96,8 +150,12 @@ function TxListView() {
             {data?.transactions.map((t) => {
               const acc = data.accounts.find((a) => a.id === t.account_id);
               const isSplit = !!(t as any).split_group_id;
+              const isSel = selected.has(t.id);
               return (
-                <tr key={t.id} className="border-t border-border hover:bg-secondary/20">
+                <tr key={t.id} className={`border-t border-border hover:bg-secondary/20 ${isSel ? "bg-primary/5" : ""}`}>
+                  <td className="px-3 py-2">
+                    <input type="checkbox" checked={isSel} onChange={() => toggleOne(t.id)} aria-label="Selecionar" />
+                  </td>
                   <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">{formatDate(t.date)}</td>
                   <td className="px-3 py-2 font-medium">
                     {t.merchant}
@@ -459,17 +517,29 @@ function TxLedgerView() {
 
         {grouped.map((g) => (
           <div key={g.key}>
-            {granularity !== "daily" && (
-              <div className="grid grid-cols-[80px_1fr_140px_160px] gap-3 px-4 py-1.5 bg-secondary/20 text-xs font-medium border-b border-border">
-                <div className="text-muted-foreground">{g.label}</div>
-                <div className="text-muted-foreground">{g.entries.length} {g.entries.length === 1 ? "lançamento" : "lançamentos"}</div>
-                <div className={`text-right tabular-nums ${g.subtotal >= 0 ? "text-success" : "text-destructive"}`}>
+            {granularity !== "daily" ? (
+              // Aggregated single row per bucket
+              <div className="grid grid-cols-[80px_1fr_140px_160px] gap-3 px-4 py-2.5 border-b border-border hover:bg-secondary/20 text-sm">
+                <div className="text-muted-foreground whitespace-nowrap">{g.label}</div>
+                <div className="min-w-0">
+                  <div className="font-medium">
+                    {granularity === "weekly" ? "Semana" : "Mês"} · {g.entries.length} {g.entries.length === 1 ? "lançamento" : "lançamentos"}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    Entradas {formatCurrency(g.entries.filter((e: any) => Number(e.amount) > 0).reduce((s: number, e: any) => s + Number(e.amount), 0), data!.currency)}
+                    {" · "}
+                    Saídas {formatCurrency(Math.abs(g.entries.filter((e: any) => Number(e.amount) < 0).reduce((s: number, e: any) => s + Number(e.amount), 0)), data!.currency)}
+                  </div>
+                </div>
+                <div className={`text-right tabular-nums self-center font-medium ${g.subtotal >= 0 ? "text-success" : "text-destructive"}`}>
                   {formatCurrency(g.subtotal, data!.currency)}
                 </div>
-                <div />
+                <div className={`text-right tabular-nums self-center font-medium ${Number(g.entries[g.entries.length - 1]?.balance ?? 0) < 0 ? "text-destructive" : ""}`}>
+                  {formatCurrency(Number(g.entries[g.entries.length - 1]?.balance ?? 0), data!.currency)}
+                </div>
               </div>
-            )}
-            {g.entries.map((t) => {
+            ) : (
+              g.entries.map((t) => {
               const acc = data?.accounts.find((a) => a.id === t.account_id);
               const status = (t.status ?? "confirmed") as "confirmed" | "scheduled" | "pending" | "projected";
               const dotColor = t.is_transfer
@@ -506,7 +576,8 @@ function TxLedgerView() {
                   </div>
                 </div>
               );
-            })}
+              })
+            )}
           </div>
         ))}
 

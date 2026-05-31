@@ -15,11 +15,11 @@ import { Route as AppIndexRouteImport } from './routes/_app.index'
 import { Route as AppTransactionsRouteImport } from './routes/_app.transactions'
 import { Route as AppRulesRouteImport } from './routes/_app.rules'
 import { Route as AppRecurrencesRouteImport } from './routes/_app.recurrences'
-import { Route as AppProjectionsRouteImport } from './routes/_app.projections'
 import { Route as AppImportRouteImport } from './routes/_app.import'
 import { Route as AppGoalsRouteImport } from './routes/_app.goals'
 import { Route as AppCreditCardsRouteImport } from './routes/_app.credit-cards'
 import { Route as AppCategoriesRouteImport } from './routes/_app.categories'
+import { Route as AppCashflowRouteImport } from './routes/_app.cashflow'
 import { Route as AppBudgetsRouteImport } from './routes/_app.budgets'
 import { Route as AppAccountsRouteImport } from './routes/_app.accounts'
 
@@ -52,11 +52,6 @@ const AppRecurrencesRoute = AppRecurrencesRouteImport.update({
   path: '/recurrences',
   getParentRoute: () => AppRoute,
 } as any)
-const AppProjectionsRoute = AppProjectionsRouteImport.update({
-  id: '/projections',
-  path: '/projections',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppImportRoute = AppImportRouteImport.update({
   id: '/import',
   path: '/import',
@@ -77,6 +72,11 @@ const AppCategoriesRoute = AppCategoriesRouteImport.update({
   path: '/categories',
   getParentRoute: () => AppRoute,
 } as any)
+const AppCashflowRoute = AppCashflowRouteImport.update({
+  id: '/cashflow',
+  path: '/cashflow',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppBudgetsRoute = AppBudgetsRouteImport.update({
   id: '/budgets',
   path: '/budgets',
@@ -93,11 +93,11 @@ export interface FileRoutesByFullPath {
   '/login': typeof LoginRoute
   '/accounts': typeof AppAccountsRoute
   '/budgets': typeof AppBudgetsRoute
+  '/cashflow': typeof AppCashflowRoute
   '/categories': typeof AppCategoriesRoute
   '/credit-cards': typeof AppCreditCardsRoute
   '/goals': typeof AppGoalsRoute
   '/import': typeof AppImportRoute
-  '/projections': typeof AppProjectionsRoute
   '/recurrences': typeof AppRecurrencesRoute
   '/rules': typeof AppRulesRoute
   '/transactions': typeof AppTransactionsRoute
@@ -106,11 +106,11 @@ export interface FileRoutesByTo {
   '/login': typeof LoginRoute
   '/accounts': typeof AppAccountsRoute
   '/budgets': typeof AppBudgetsRoute
+  '/cashflow': typeof AppCashflowRoute
   '/categories': typeof AppCategoriesRoute
   '/credit-cards': typeof AppCreditCardsRoute
   '/goals': typeof AppGoalsRoute
   '/import': typeof AppImportRoute
-  '/projections': typeof AppProjectionsRoute
   '/recurrences': typeof AppRecurrencesRoute
   '/rules': typeof AppRulesRoute
   '/transactions': typeof AppTransactionsRoute
@@ -122,11 +122,11 @@ export interface FileRoutesById {
   '/login': typeof LoginRoute
   '/_app/accounts': typeof AppAccountsRoute
   '/_app/budgets': typeof AppBudgetsRoute
+  '/_app/cashflow': typeof AppCashflowRoute
   '/_app/categories': typeof AppCategoriesRoute
   '/_app/credit-cards': typeof AppCreditCardsRoute
   '/_app/goals': typeof AppGoalsRoute
   '/_app/import': typeof AppImportRoute
-  '/_app/projections': typeof AppProjectionsRoute
   '/_app/recurrences': typeof AppRecurrencesRoute
   '/_app/rules': typeof AppRulesRoute
   '/_app/transactions': typeof AppTransactionsRoute
@@ -139,11 +139,11 @@ export interface FileRouteTypes {
     | '/login'
     | '/accounts'
     | '/budgets'
+    | '/cashflow'
     | '/categories'
     | '/credit-cards'
     | '/goals'
     | '/import'
-    | '/projections'
     | '/recurrences'
     | '/rules'
     | '/transactions'
@@ -152,11 +152,11 @@ export interface FileRouteTypes {
     | '/login'
     | '/accounts'
     | '/budgets'
+    | '/cashflow'
     | '/categories'
     | '/credit-cards'
     | '/goals'
     | '/import'
-    | '/projections'
     | '/recurrences'
     | '/rules'
     | '/transactions'
@@ -167,11 +167,11 @@ export interface FileRouteTypes {
     | '/login'
     | '/_app/accounts'
     | '/_app/budgets'
+    | '/_app/cashflow'
     | '/_app/categories'
     | '/_app/credit-cards'
     | '/_app/goals'
     | '/_app/import'
-    | '/_app/projections'
     | '/_app/recurrences'
     | '/_app/rules'
     | '/_app/transactions'
@@ -227,13 +227,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppRecurrencesRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/projections': {
-      id: '/_app/projections'
-      path: '/projections'
-      fullPath: '/projections'
-      preLoaderRoute: typeof AppProjectionsRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/_app/import': {
       id: '/_app/import'
       path: '/import'
@@ -262,6 +255,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppCategoriesRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/cashflow': {
+      id: '/_app/cashflow'
+      path: '/cashflow'
+      fullPath: '/cashflow'
+      preLoaderRoute: typeof AppCashflowRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/budgets': {
       id: '/_app/budgets'
       path: '/budgets'
@@ -282,11 +282,11 @@ declare module '@tanstack/react-router' {
 interface AppRouteChildren {
   AppAccountsRoute: typeof AppAccountsRoute
   AppBudgetsRoute: typeof AppBudgetsRoute
+  AppCashflowRoute: typeof AppCashflowRoute
   AppCategoriesRoute: typeof AppCategoriesRoute
   AppCreditCardsRoute: typeof AppCreditCardsRoute
   AppGoalsRoute: typeof AppGoalsRoute
   AppImportRoute: typeof AppImportRoute
-  AppProjectionsRoute: typeof AppProjectionsRoute
   AppRecurrencesRoute: typeof AppRecurrencesRoute
   AppRulesRoute: typeof AppRulesRoute
   AppTransactionsRoute: typeof AppTransactionsRoute
@@ -296,11 +296,11 @@ interface AppRouteChildren {
 const AppRouteChildren: AppRouteChildren = {
   AppAccountsRoute: AppAccountsRoute,
   AppBudgetsRoute: AppBudgetsRoute,
+  AppCashflowRoute: AppCashflowRoute,
   AppCategoriesRoute: AppCategoriesRoute,
   AppCreditCardsRoute: AppCreditCardsRoute,
   AppGoalsRoute: AppGoalsRoute,
   AppImportRoute: AppImportRoute,
-  AppProjectionsRoute: AppProjectionsRoute,
   AppRecurrencesRoute: AppRecurrencesRoute,
   AppRulesRoute: AppRulesRoute,
   AppTransactionsRoute: AppTransactionsRoute,
