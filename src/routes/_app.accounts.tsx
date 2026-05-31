@@ -18,9 +18,12 @@ type Form = {
   institution: string;
   color: string;
   initial_balance: number;
+  closing_day?: number | null;
+  due_day?: number | null;
+  credit_limit_usd?: number | null;
 };
 
-const empty: Form = { name: "", type: "checking", currency: "USD", institution: "", color: "#4f46e5", initial_balance: 0 };
+const empty: Form = { name: "", type: "checking", currency: "USD", institution: "", color: "#4f46e5", initial_balance: 0, closing_day: null, due_day: null, credit_limit_usd: null };
 
 function AccountsPage() {
   const fetchAccounts = useServerFn(listAccounts);
@@ -30,7 +33,13 @@ function AccountsPage() {
   const [form, setForm] = useState<Form | null>(null);
 
   const save = useMutation({
-    mutationFn: (v: Form) => upsert({ data: { ...v, institution: v.institution || null } }),
+    mutationFn: (v: Form) => upsert({ data: {
+      ...v,
+      institution: v.institution || null,
+      closing_day: v.type === "credit_card" ? (v.closing_day || null) : null,
+      due_day: v.type === "credit_card" ? (v.due_day || null) : null,
+      credit_limit_usd: v.type === "credit_card" ? (v.credit_limit_usd ?? null) : null,
+    } }),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["accounts"] }); setForm(null); },
   });
 
@@ -57,7 +66,7 @@ function AccountsPage() {
             <div className="mt-2 text-lg font-semibold">{formatCurrency(Number(a.initial_balance), a.currency)}</div>
             <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Saldo inicial · {a.currency}</div>
             <div className="mt-3 flex gap-2">
-              <Button size="sm" variant="outline" onClick={() => setForm({ id: a.id, name: a.name, type: a.type, currency: a.currency, institution: a.institution ?? "", color: a.color, initial_balance: Number(a.initial_balance) })}>Editar</Button>
+              <Button size="sm" variant="outline" onClick={() => setForm({ id: a.id, name: a.name, type: a.type, currency: a.currency, institution: a.institution ?? "", color: a.color, initial_balance: Number(a.initial_balance), closing_day: a.closing_day ?? null, due_day: a.due_day ?? null, credit_limit_usd: a.credit_limit_usd != null ? Number(a.credit_limit_usd) : null })}>Editar</Button>
               <Button size="sm" variant="ghost" onClick={() => archive.mutate(a)}>
                 {a.is_archived ? <ArchiveRestore className="h-4 w-4" /> : <Archive className="h-4 w-4" />}
               </Button>
@@ -89,6 +98,25 @@ function AccountsPage() {
               <Input type="color" value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} />
               <Input type="number" step="0.01" placeholder="Saldo inicial" value={form.initial_balance} onChange={(e) => setForm({ ...form, initial_balance: Number(e.target.value) })} />
             </div>
+            {form.type === "credit_card" && (
+              <div className="space-y-2 rounded-md border border-border p-3 bg-secondary/20">
+                <div className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Fatura</div>
+                <div className="grid grid-cols-3 gap-2">
+                  <div>
+                    <label className="text-[10px] text-muted-foreground">Fechamento (dia)</label>
+                    <Input type="number" min={1} max={31} placeholder="ex: 25" value={form.closing_day ?? ""} onChange={(e) => setForm({ ...form, closing_day: e.target.value ? Number(e.target.value) : null })} />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-muted-foreground">Vencimento (dia)</label>
+                    <Input type="number" min={1} max={31} placeholder="ex: 5" value={form.due_day ?? ""} onChange={(e) => setForm({ ...form, due_day: e.target.value ? Number(e.target.value) : null })} />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-muted-foreground">Limite (USD)</label>
+                    <Input type="number" step="0.01" placeholder="opcional" value={form.credit_limit_usd ?? ""} onChange={(e) => setForm({ ...form, credit_limit_usd: e.target.value ? Number(e.target.value) : null })} />
+                  </div>
+                </div>
+              </div>
+            )}
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="ghost" onClick={() => setForm(null)}>Cancelar</Button>
               <Button onClick={() => save.mutate(form)} disabled={save.isPending || !form.name}>{save.isPending ? "Salvando…" : "Salvar"}</Button>
