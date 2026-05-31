@@ -1,11 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { listBudgetsYear, upsertBudget, applyBudgetToYear, deleteBudget } from "@/lib/finance.functions";
+import { listBudgetsYear, upsertBudget, applyBudgetToYear, deleteBudget, getBudgetSuggestions, reallocateBudget, bulkUpsertBudgets } from "@/lib/finance.functions";
 import { formatCurrency } from "@/lib/format";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, ChevronRight, ChevronDown, ChevronRightIcon, Copy, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, ChevronRightIcon, Copy, Trash2, ArrowLeftRight, Sparkles } from "lucide-react";
 import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
@@ -28,11 +28,18 @@ function BudgetsPage() {
   const upsert = useServerFn(upsertBudget);
   const applyAll = useServerFn(applyBudgetToYear);
   const del = useServerFn(deleteBudget);
+  const fetchSugg = useServerFn(getBudgetSuggestions);
+  const realloc = useServerFn(reallocateBudget);
+  const bulk = useServerFn(bulkUpsertBudgets);
   const qc = useQueryClient();
 
   const { data } = useQuery({
     queryKey: ["budgets-year", year],
     queryFn: () => fetchYear({ data: { year } }),
+  });
+  const { data: sugg } = useQuery({
+    queryKey: ["budget-suggestions", 6],
+    queryFn: () => fetchSugg({ data: { months: 6 } }),
   });
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["budgets-year", year] });
@@ -48,6 +55,14 @@ function BudgetsPage() {
   });
   const delMut = useMutation({
     mutationFn: (v: { category_id: string; month: string }) => del({ data: v }),
+    onSuccess: invalidate,
+  });
+  const reallocMut = useMutation({
+    mutationFn: (v: { from_category_id: string; to_category_id: string; month: string; amount_usd: number }) => realloc({ data: v }),
+    onSuccess: invalidate,
+  });
+  const bulkMut = useMutation({
+    mutationFn: (items: { category_id: string; month: string; amount_usd: number; budget_type: BudgetType; rollover_enabled: boolean }[]) => bulk({ data: { items } }),
     onSuccess: invalidate,
   });
 
@@ -134,6 +149,38 @@ function BudgetsPage() {
     return { groups, monthlyTotals, monthlySpent };
   }, [data]);
 
+  const suggStats = sugg?.stats ?? {};
+  const allCategories = (data?.categories ?? []) as any[];
+
+  function applySuggestionsToYear(useMedian: boolean) {
+    // Apply median (or avg) of last 6 months to every leaf category, every month of `year`,
+    // only filling cells that are currently empty (null) to preserve manual edits.
+    const items: { category_id: string; month: string; amount_usd: number; budget_type: BudgetType; rollover_enabled: boolean }[] = [];
+    const budgetSet = new Set(
+      (data?.budgets ?? []).map((b: any) => `${b.category_id}|${(b.month as string).slice(0, 7)}`)
+    );
+    for (const c of allCategories) {
+      if (c.is_income || c.is_transfer) continue;
+      const s = suggStats[c.id];
+      if (!s) continue;
+      const amt = Math.round((useMedian ? s.median : s.avg) * 100) / 100;
+      if (amt <= 0) continue;
+      for (let m = 0; m < 12; m++) {
+        const monthKeyShort = `${year}-${String(m + 1).padStart(2, "0")}`;
+        if (budgetSet.has(`${c.id}|${monthKeyShort}`)) continue;
+        items.push({
+          category_id: c.id,
+          month: monthKey(year, m),
+          amount_usd: amt,
+          budget_type: "flex",
+          rollover_enabled: false,
+        });
+      }
+    }
+    if (items.length === 0) return;
+    bulkMut.mutate(items);
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -141,7 +188,13 @@ function BudgetsPage() {
           <h1 className="text-2xl font-semibold tracking-tight">Orçamentos {year}</h1>
           <p className="text-sm text-muted-foreground">Grid anual com tipos (fixo/variável/anual) e rollover</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <SuggestAllPopover onApply={applySuggestionsToYear} />
+          <ReallocatePopover
+            year={year}
+            categories={allCategories}
+            onSubmit={(v) => reallocMut.mutate(v)}
+          />
           <Button size="icon" variant="outline" onClick={() => setYear(year - 1)}><ChevronLeft className="h-4 w-4" /></Button>
           <div className="min-w-[80px] text-center text-sm font-medium">{year}</div>
           <Button size="icon" variant="outline" onClick={() => setYear(year + 1)}><ChevronRight className="h-4 w-4" /></Button>
@@ -173,6 +226,7 @@ function BudgetsPage() {
                   onToggle={() => setExpanded((s) => ({ ...s, [g.parent.id]: !s[g.parent.id] }))}
                   total={total}
                   year={year}
+                  suggStats={suggStats}
                   onUpsert={(v) => upsertMut.mutate(v)}
                   onDelete={(v) => delMut.mutate(v)}
                   onApplyYear={(v) => applyMut.mutate(v)}
@@ -225,14 +279,16 @@ type DeletePayload = { category_id: string; month: string };
 type ApplyYearPayload = { category_id: string; amount_usd: number; budget_type: "fixed" | "flex"; rollover_enabled: boolean };
 
 function FragmentRows({
-  group, isOpen, onToggle, total, year, onUpsert, onDelete, onApplyYear,
+  group, isOpen, onToggle, total, year, suggStats, onUpsert, onDelete, onApplyYear,
 }: {
   group: Group; isOpen: boolean; onToggle: () => void; total: number; year: number;
+  suggStats: Record<string, { avg: number; median: number; max: number; last: number; months: number }>;
   onUpsert: (v: UpsertPayload) => void;
   onDelete: (v: DeletePayload) => void;
   onApplyYear: (v: ApplyYearPayload) => void;
 }) {
   const { parent, children, parentTotalBudget } = group;
+  const parentSugg = suggStats[parent.id];
   // Aggregate spent for parent already includes children; aggregate budgets via parentTotalBudget.
   // For the parent row cells, show aggregated total (read-only when there are children with budgets),
   // but always allow editing the parent's own budget for that month.
@@ -253,6 +309,7 @@ function FragmentRows({
               onApply={(amount, type, rollover) =>
                 onApplyYear({ category_id: parent.id, amount_usd: amount, budget_type: type, rollover_enabled: rollover })
               }
+              suggestion={parentSugg}
             />
           </div>
         </td>
@@ -269,6 +326,7 @@ function FragmentRows({
                 type={parent.types[m] ?? "flex"}
                 rollover={parent.rollovers[m]}
                 displayValue={aggBudget > 0 ? aggBudget : null}
+                suggestion={parentSugg}
                 onSave={(amt, t, ro) =>
                   onUpsert({
                     category_id: parent.id,
@@ -292,6 +350,7 @@ function FragmentRows({
         <td className="px-3 py-2 text-right tabular-nums font-semibold">{formatCurrency(total)}</td>
       </tr>
       {isOpen && children.map((ch) => {
+        const childSugg = suggStats[ch.id];
         const subTotal = ch.budgets.reduce<number>((s, v) => s + (v ?? 0), 0);
         return (
           <tr key={ch.id} className="border-t border-border/50 hover:bg-secondary/10">
@@ -300,11 +359,15 @@ function FragmentRows({
                 <div className="flex items-center gap-2">
                   <div className="h-2 w-2 rounded-full opacity-70" style={{ background: ch.color }} />
                   <span className="text-muted-foreground">{ch.name}</span>
+                  {childSugg && childSugg.avg > 0 && (
+                    <span className="text-[10px] text-muted-foreground/70">méd {formatCurrency(childSugg.median)}/mês</span>
+                  )}
                 </div>
                 <ApplyToYearPopover
                   onApply={(amount, type, rollover) =>
                     onApplyYear({ category_id: ch.id, amount_usd: amount, budget_type: type, rollover_enabled: rollover })
                   }
+                  suggestion={childSugg}
                 />
               </div>
             </td>
@@ -319,6 +382,7 @@ function FragmentRows({
                     value={b}
                     type={ch.types[m] ?? "flex"}
                     rollover={ch.rollovers[m]}
+                    suggestion={childSugg}
                     onSave={(amt, t, ro) =>
                       onUpsert({
                         category_id: ch.id,
@@ -348,7 +412,7 @@ function FragmentRows({
 }
 
 function CellEditor({
-  value, type, rollover, onSave, onClear, displayValue,
+  value, type, rollover, onSave, onClear, displayValue, suggestion,
 }: {
   value: number | null;
   type: BudgetType;
@@ -356,6 +420,7 @@ function CellEditor({
   onSave: (amount: number, type: BudgetType, rollover: boolean) => void;
   onClear: () => void;
   displayValue?: number | null;
+  suggestion?: { avg: number; median: number; max: number; last: number; months: number };
 }) {
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState<string>(value != null ? String(value) : "");
@@ -386,6 +451,22 @@ function CellEditor({
             className="w-full bg-input border border-border rounded px-2 py-1.5 text-sm"
             autoFocus
           />
+          {suggestion && suggestion.avg > 0 && (
+            <div className="flex flex-wrap gap-1 pt-1">
+              <button type="button" onClick={() => setDraft(String(Math.round(suggestion.median * 100) / 100))}
+                className="text-[10px] rounded border border-border bg-secondary/40 px-1.5 py-0.5 hover:bg-secondary">
+                méd {formatCurrency(suggestion.median)}
+              </button>
+              <button type="button" onClick={() => setDraft(String(Math.round(suggestion.avg * 100) / 100))}
+                className="text-[10px] rounded border border-border bg-secondary/40 px-1.5 py-0.5 hover:bg-secondary">
+                avg {formatCurrency(suggestion.avg)}
+              </button>
+              <button type="button" onClick={() => setDraft(String(Math.round(suggestion.max * 100) / 100))}
+                className="text-[10px] rounded border border-border bg-secondary/40 px-1.5 py-0.5 hover:bg-secondary">
+                máx {formatCurrency(suggestion.max)}
+              </button>
+            </div>
+          )}
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs">Tipo</Label>
@@ -417,7 +498,10 @@ function CellEditor({
   );
 }
 
-function ApplyToYearPopover({ onApply }: { onApply: (amount: number, type: "fixed" | "flex", rollover: boolean) => void }) {
+function ApplyToYearPopover({ onApply, suggestion }: {
+  onApply: (amount: number, type: "fixed" | "flex", rollover: boolean) => void;
+  suggestion?: { avg: number; median: number; max: number; last: number; months: number };
+}) {
   const [open, setOpen] = useState(false);
   const [amt, setAmt] = useState("");
   const [t, setT] = useState<"fixed" | "flex">("fixed");
@@ -433,6 +517,14 @@ function ApplyToYearPopover({ onApply }: { onApply: (amount: number, type: "fixe
         <div className="text-xs font-medium">Aplicar ao ano inteiro</div>
         <input type="number" step="10" placeholder="Valor mensal (USD)" value={amt} onChange={(e) => setAmt(e.target.value)}
           className="w-full bg-input border border-border rounded px-2 py-1.5 text-sm" autoFocus />
+        {suggestion && suggestion.avg > 0 && (
+          <div className="flex flex-wrap gap-1">
+            <button type="button" onClick={() => setAmt(String(Math.round(suggestion.median * 100) / 100))}
+              className="text-[10px] rounded border border-border bg-secondary/40 px-1.5 py-0.5 hover:bg-secondary">méd {formatCurrency(suggestion.median)}</button>
+            <button type="button" onClick={() => setAmt(String(Math.round(suggestion.avg * 100) / 100))}
+              className="text-[10px] rounded border border-border bg-secondary/40 px-1.5 py-0.5 hover:bg-secondary">avg {formatCurrency(suggestion.avg)}</button>
+          </div>
+        )}
         <Select value={t} onValueChange={(v) => setT(v as "fixed" | "flex")}>
           <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -446,6 +538,92 @@ function ApplyToYearPopover({ onApply }: { onApply: (amount: number, type: "fixe
         </div>
         <Button size="sm" className="w-full" onClick={() => { const n = Number(amt); if (!isFinite(n) || n < 0) return; onApply(n, t, ro); setOpen(false); }}>
           Aplicar aos 12 meses
+        </Button>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function SuggestAllPopover({ onApply }: { onApply: (useMedian: boolean) => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button size="sm" variant="outline" className="gap-1.5"><Sparkles className="h-3.5 w-3.5" /> Sugestões</Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-72 space-y-3" align="end">
+        <div className="text-sm font-medium">Preencher pela média histórica</div>
+        <p className="text-xs text-muted-foreground">
+          Usa os últimos 6 meses de gastos para preencher cada categoria do ano. Só preenche células vazias — seus valores manuais ficam.
+        </p>
+        <div className="flex gap-2">
+          <Button size="sm" className="flex-1" onClick={() => { onApply(true); setOpen(false); }}>
+            Usar mediana
+          </Button>
+          <Button size="sm" variant="outline" className="flex-1" onClick={() => { onApply(false); setOpen(false); }}>
+            Usar média
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function ReallocatePopover({ year, categories, onSubmit }: {
+  year: number;
+  categories: { id: string; name: string; color: string; parent_id: string | null; is_income?: boolean; is_transfer?: boolean }[];
+  onSubmit: (v: { from_category_id: string; to_category_id: string; month: string; amount_usd: number }) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [m, setM] = useState(new Date().getMonth());
+  const [amt, setAmt] = useState("");
+  const opts = categories.filter((c) => !c.is_income && !c.is_transfer);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button size="sm" variant="outline" className="gap-1.5"><ArrowLeftRight className="h-3.5 w-3.5" /> Realocar</Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-80 space-y-3" align="end">
+        <div className="text-sm font-medium">Mover orçamento entre categorias</div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-1">
+            <Label className="text-xs">De</Label>
+            <Select value={from} onValueChange={setFrom}>
+              <SelectTrigger className="h-9"><SelectValue placeholder="Categoria" /></SelectTrigger>
+              <SelectContent>{opts.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Para</Label>
+            <Select value={to} onValueChange={setTo}>
+              <SelectTrigger className="h-9"><SelectValue placeholder="Categoria" /></SelectTrigger>
+              <SelectContent>{opts.map((c) => <SelectItem key={c.id} value={c.id}>{c.name}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2">
+          <div className="space-y-1">
+            <Label className="text-xs">Mês</Label>
+            <Select value={String(m)} onValueChange={(v) => setM(Number(v))}>
+              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+              <SelectContent>{MONTHS_PT.map((mm, i) => <SelectItem key={mm} value={String(i)}>{mm}/{year}</SelectItem>)}</SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs">Valor (USD)</Label>
+            <input type="number" step="10" value={amt} onChange={(e) => setAmt(e.target.value)}
+              className="w-full bg-input border border-border rounded px-2 h-9 text-sm" />
+          </div>
+        </div>
+        <Button size="sm" className="w-full" onClick={() => {
+          const n = Number(amt);
+          if (!from || !to || from === to || !isFinite(n) || n <= 0) return;
+          onSubmit({ from_category_id: from, to_category_id: to, month: monthKey(year, m), amount_usd: n });
+          setOpen(false); setAmt("");
+        }}>
+          Mover {amt && formatCurrency(Number(amt) || 0)}
         </Button>
       </PopoverContent>
     </Popover>
