@@ -303,3 +303,183 @@ function TagsDialog({ tx, onClose }: { tx: any; onClose: () => void }) {
     </Dialog>
   );
 }
+
+// =================== EXTRATO ===================
+
+type Granularity = "daily" | "weekly" | "monthly";
+type Preset = "this_month" | "last_month" | "last_7" | "last_30" | "last_90" | "ytd" | "custom";
+
+function presetRange(p: Preset): { from: string; to: string } {
+  const today = new Date();
+  const todayStr = today.toISOString().slice(0, 10);
+  const fmt = (d: Date) => d.toISOString().slice(0, 10);
+  if (p === "this_month") {
+    const s = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
+    const e = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 0));
+    return { from: fmt(s), to: fmt(e) };
+  }
+  if (p === "last_month") {
+    const s = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1));
+    const e = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 0));
+    return { from: fmt(s), to: fmt(e) };
+  }
+  if (p === "last_7") return { from: fmt(new Date(today.getTime() - 6 * 86400000)), to: todayStr };
+  if (p === "last_30") return { from: fmt(new Date(today.getTime() - 29 * 86400000)), to: todayStr };
+  if (p === "last_90") return { from: fmt(new Date(today.getTime() - 89 * 86400000)), to: todayStr };
+  if (p === "ytd") return { from: `${today.getUTCFullYear()}-01-01`, to: todayStr };
+  return { from: fmt(new Date(today.getTime() - 29 * 86400000)), to: todayStr };
+}
+
+function TxLedgerView() {
+  const [preset, setPreset] = useState<Preset>("this_month");
+  const [granularity, setGranularity] = useState<Granularity>("daily");
+  const [accountId, setAccountId] = useState<string>("");
+  const [customFrom, setCustomFrom] = useState<string>("");
+  const [customTo, setCustomTo] = useState<string>("");
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  const { from, to } = useMemo(() => {
+    if (preset === "custom" && customFrom && customTo) return { from: customFrom, to: customTo };
+    return presetRange(preset);
+  }, [preset, customFrom, customTo]);
+
+  const fetchLedger = useServerFn(getLedgerView);
+  const { data, isLoading } = useQuery({
+    queryKey: ["ledger", from, to, granularity, accountId],
+    queryFn: () => fetchLedger({ data: {
+      from, to, granularity, accountId: accountId || null,
+    } }),
+  });
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-2 items-center">
+        <select value={preset} onChange={(e) => setPreset(e.target.value as Preset)} className="rounded-md border border-border bg-input px-3 py-2 text-sm">
+          <option value="this_month">Este mês</option>
+          <option value="last_month">Mês anterior</option>
+          <option value="last_7">Últimos 7 dias</option>
+          <option value="last_30">Últimos 30 dias</option>
+          <option value="last_90">Últimos 90 dias</option>
+          <option value="ytd">Ano até hoje</option>
+          <option value="custom">Customizado</option>
+        </select>
+        {preset === "custom" && (
+          <>
+            <Input type="date" value={customFrom} onChange={(e) => setCustomFrom(e.target.value)} className="w-40" />
+            <Input type="date" value={customTo} onChange={(e) => setCustomTo(e.target.value)} className="w-40" />
+          </>
+        )}
+        <div className="inline-flex rounded-md border border-border overflow-hidden text-sm">
+          {(["daily", "weekly", "monthly"] as Granularity[]).map((g) => (
+            <button key={g} onClick={() => setGranularity(g)}
+              className={`px-3 py-1.5 ${granularity === g ? "bg-primary text-primary-foreground" : "bg-card hover:bg-secondary/40"}`}>
+              {g === "daily" ? "Diário" : g === "weekly" ? "Semanal" : "Mensal"}
+            </button>
+          ))}
+        </div>
+        <select value={accountId} onChange={(e) => setAccountId(e.target.value)} className="rounded-md border border-border bg-input px-3 py-2 text-sm">
+          <option value="">Todas as contas (USD)</option>
+          {data?.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+        </select>
+      </div>
+
+      {data && (
+        <div className="grid sm:grid-cols-4 gap-3">
+          <Stat label="Saldo inicial" value={formatCurrency(data.opening, data.currency)} />
+          <Stat label="Entradas" value={formatCurrency(data.periods.reduce((s, p) => s + p.income, 0), data.currency)} accent="text-success" />
+          <Stat label="Saídas" value={formatCurrency(data.periods.reduce((s, p) => s + p.expense, 0), data.currency)} accent="text-destructive" />
+          <Stat label="Saldo final" value={formatCurrency(data.closing, data.currency)} accent={data.closing >= 0 ? "text-success" : "text-destructive"} />
+        </div>
+      )}
+
+      <div className="rounded-xl border border-border bg-card overflow-hidden overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-secondary/40 text-xs text-muted-foreground">
+            <tr>
+              <th className="text-left px-3 py-2">Período</th>
+              <th className="text-right px-3 py-2">#</th>
+              <th className="text-right px-3 py-2">Entradas</th>
+              <th className="text-right px-3 py-2">Saídas</th>
+              <th className="text-right px-3 py-2">Saldo</th>
+              <th className="text-right px-3 py-2">Acumulado</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data && (
+              <tr className="border-t border-border bg-secondary/10 text-xs">
+                <td className="px-3 py-2 italic text-muted-foreground" colSpan={5}>Saldo inicial em {from}</td>
+                <td className="px-3 py-2 text-right tabular-nums font-medium">{formatCurrency(data.opening, data.currency)}</td>
+              </tr>
+            )}
+            {data?.periods.map((p) => {
+              const isOpen = !!expanded[p.key];
+              return (
+                <FragmentLedger key={p.key} period={p} isOpen={isOpen}
+                  onToggle={() => setExpanded((s) => ({ ...s, [p.key]: !s[p.key] }))}
+                  currency={data.currency}
+                  accounts={data.accounts}
+                />
+              );
+            })}
+            {data && data.periods.length === 0 && (
+              <tr><td colSpan={6} className="p-8 text-center text-muted-foreground text-sm">Nenhum lançamento neste período.</td></tr>
+            )}
+          </tbody>
+        </table>
+        {isLoading && <div className="p-4 text-center text-xs text-muted-foreground">Carregando…</div>}
+      </div>
+    </div>
+  );
+}
+
+function FragmentLedger({ period, isOpen, onToggle, currency, accounts }: {
+  period: any; isOpen: boolean; onToggle: () => void; currency: string; accounts: any[];
+}) {
+  return (
+    <>
+      <tr className="border-t border-border hover:bg-secondary/20 cursor-pointer" onClick={onToggle}>
+        <td className="px-3 py-2 font-medium">
+          <button className="inline-flex items-center gap-1.5">
+            {isOpen ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
+            {period.label}
+          </button>
+        </td>
+        <td className="px-3 py-2 text-right text-muted-foreground tabular-nums">{period.count}</td>
+        <td className="px-3 py-2 text-right tabular-nums text-success">{period.income > 0 ? formatCurrency(period.income, currency) : "—"}</td>
+        <td className="px-3 py-2 text-right tabular-nums text-destructive">{period.expense > 0 ? formatCurrency(period.expense, currency) : "—"}</td>
+        <td className={`px-3 py-2 text-right tabular-nums ${period.net >= 0 ? "text-success" : "text-destructive"}`}>
+          {formatCurrency(period.net, currency)}
+        </td>
+        <td className={`px-3 py-2 text-right tabular-nums font-medium ${period.balance >= 0 ? "" : "text-destructive"}`}>
+          {formatCurrency(period.balance, currency)}
+        </td>
+      </tr>
+      {isOpen && period.transactions.map((t: any) => {
+        const acc = accounts.find((a: any) => a.id === t.account_id);
+        return (
+          <tr key={t.id} className="border-t border-border/40 bg-secondary/5 text-xs">
+            <td className="px-3 py-1.5 pl-8 text-muted-foreground whitespace-nowrap">{formatDate(t.date)}</td>
+            <td className="px-3 py-1.5" colSpan={2}>
+              <span className="font-medium">{t.merchant}</span>
+              {acc && <span className="ml-2 text-muted-foreground">· {acc.name}</span>}
+            </td>
+            <td className="px-3 py-1.5" />
+            <td className={`px-3 py-1.5 text-right tabular-nums ${Number(t.amount) < 0 ? "text-destructive" : "text-success"}`}>
+              {formatCurrency(Number(t.amount), currency)}
+            </td>
+            <td className="px-3 py-1.5" />
+          </tr>
+        );
+      })}
+    </>
+  );
+}
+
+function Stat({ label, value, accent }: { label: string; value: string; accent?: string }) {
+  return (
+    <div className="rounded-xl border border-border bg-card p-4">
+      <div className="text-xs uppercase tracking-widest text-muted-foreground">{label}</div>
+      <div className={`mt-1 text-xl font-semibold ${accent ?? ""}`}>{value}</div>
+    </div>
+  );
+}
