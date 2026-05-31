@@ -53,6 +53,19 @@ export const updateTxCategory = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+export const bulkUpdateTxCategory = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ ids: z.array(z.string().uuid()).min(1).max(500), categoryId: z.string().uuid().nullable() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase
+      .from("transactions")
+      .update({ category_id: data.categoryId })
+      .in("id", data.ids)
+      .eq("user_id", context.userId);
+    if (error) throw new Error(error.message);
+    return { ok: true, updated: data.ids.length };
+  });
+
 const TxImport = z.object({
   date: z.string(),
   merchant: z.string(),
