@@ -103,6 +103,9 @@ export const upsertAccount = createServerFn({ method: "POST" })
     color: z.string().max(20).optional(),
     initial_balance: z.number().default(0),
     is_archived: z.boolean().optional(),
+    closing_day: z.number().int().min(1).max(31).nullable().optional(),
+    due_day: z.number().int().min(1).max(31).nullable().optional(),
+    credit_limit_usd: z.number().nullable().optional(),
   }).parse(d))
   .handler(async ({ data, context }) => {
     const payload = { ...data, user_id: context.userId };
