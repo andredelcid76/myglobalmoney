@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { listTransactions, updateTxCategory, bulkUpdateTxCategory } from "@/lib/finance.functions";
+import { listTransactions, updateTxCategory, bulkUpdateTxCategory, createTransaction, deleteTransaction } from "@/lib/finance.functions";
 import { splitTransaction, unsplitTransaction, updateTxTags, listAllTags } from "@/lib/splits.functions";
 import { getLedgerView } from "@/lib/ledger.functions";
 import { formatCurrency, formatDate } from "@/lib/format";
@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Split, Tag as TagIcon, X, Undo2, Plus, Trash2, ChevronLeft, ChevronRight as ChevronRightIcon, CheckSquare } from "lucide-react";
+import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
