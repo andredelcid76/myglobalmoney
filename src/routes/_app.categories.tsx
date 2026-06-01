@@ -5,7 +5,7 @@ import { listCategories, upsertCategory, deleteCategory } from "@/lib/finance.fu
 import { useState, useMemo } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Plus, Trash2, Search, FolderTree } from "lucide-react";
+import { Plus, Trash2, Search, FolderTree, ChevronDown, ChevronRight, GripVertical, ChevronsDownUp, ChevronsUpDown } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_app/categories")({ component: CategoriesPage });
@@ -21,6 +21,9 @@ function CategoriesPage() {
   const { data } = useQuery({ queryKey: ["categories"], queryFn: () => fetchCats() });
   const [form, setForm] = useState<Form | null>(null);
   const [q, setQ] = useState("");
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const [dragId, setDragId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
 
   const tree = useMemo(() => {
     const cats = data?.categories ?? [];
@@ -66,6 +69,25 @@ function CategoriesPage() {
     };
   }, [data]);
 
+  const toggle = (id: string) =>
+    setCollapsed((s) => {
+      const n = new Set(s);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  const collapseAll = () => setCollapsed(new Set(parents.map((p: any) => p.id)));
+  const expandAll = () => setCollapsed(new Set());
+  const allCollapsed = parents.length > 0 && parents.every((p: any) => collapsed.has(p.id));
+
+  const handleDrop = (newParentId: string) => {
+    if (!dragId) return;
+    const cat = (data?.categories ?? []).find((c: any) => c.id === dragId);
+    setDragId(null); setDropTarget(null);
+    if (!cat || cat.parent_id === newParentId) return;
+    if (cat.id === newParentId) return;
+    inlineUpdate.mutate({ id: cat.id, name: cat.name, parent_id: newParentId });
+  };
+
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-3">
@@ -80,9 +102,14 @@ function CategoriesPage() {
             <Search className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
             <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Buscar categoria…" className="pl-8 h-9 w-56" />
           </div>
+          <Button variant="outline" size="sm" onClick={allCollapsed ? expandAll : collapseAll} title={allCollapsed ? "Expandir tudo" : "Recolher tudo"}>
+            {allCollapsed ? <ChevronsUpDown className="h-4 w-4" /> : <ChevronsDownUp className="h-4 w-4" />}
+          </Button>
           <Button onClick={() => setForm({ ...empty })}><Plus className="h-4 w-4 mr-1" /> Nova categoria</Button>
         </div>
       </div>
+
+      <p className="text-xs text-muted-foreground -mt-2">Dica: arraste uma subcategoria pelo <GripVertical className="inline h-3 w-3" /> para mover entre grupos, ou use o dropdown da coluna “Grupo (pai)”.</p>
 
       <div className="rounded-xl border border-border bg-card overflow-hidden">
         <div className="grid grid-cols-[1fr_140px_120px_88px] gap-2 px-4 py-2 bg-secondary/40 text-xs text-muted-foreground border-b border-border">
@@ -92,11 +119,23 @@ function CategoriesPage() {
           <div className="text-right">Ações</div>
         </div>
 
-        {tree.map((p) => (
+        {tree.map((p) => {
+          const isCollapsed = collapsed.has(p.id) && !q.trim();
+          const isDropOver = dropTarget === p.id && dragId && dragId !== p.id;
+          return (
           <div key={p.id}>
-            <div className="grid grid-cols-[1fr_140px_120px_88px] gap-2 px-4 py-2.5 bg-secondary/15 border-b border-border items-center">
+            <div
+              className={`grid grid-cols-[1fr_140px_120px_88px] gap-2 px-4 py-2.5 bg-secondary/15 border-b border-border items-center transition-colors ${isDropOver ? "bg-primary/10 ring-1 ring-primary/40" : ""}`}
+              onDragOver={(e) => { if (dragId) { e.preventDefault(); setDropTarget(p.id); } }}
+              onDragLeave={() => setDropTarget((t) => (t === p.id ? null : t))}
+              onDrop={(e) => { e.preventDefault(); handleDrop(p.id); }}
+            >
               <div className="flex items-center gap-2 min-w-0">
-                <FolderTree className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                <button onClick={() => toggle(p.id)} className="text-muted-foreground hover:text-foreground p-0.5" title={isCollapsed ? "Expandir" : "Recolher"}>
+                  {p.children.length > 0
+                    ? (isCollapsed ? <ChevronRight className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />)
+                    : <FolderTree className="h-3.5 w-3.5" />}
+                </button>
                 <input
                   type="color" value={p.color}
                   className="h-5 w-5 rounded cursor-pointer bg-transparent border border-border"
@@ -110,6 +149,9 @@ function CategoriesPage() {
                     if (v && v !== p.name) inlineUpdate.mutate({ id: p.id, name: v });
                   }}
                 />
+                {p.children.length > 0 && (
+                  <span className="text-[10px] text-muted-foreground">{p.children.length}</span>
+                )}
                 {p.is_income && <span className="text-[10px] uppercase tracking-widest text-emerald-400">income</span>}
                 {p.is_transfer && <span className="text-[10px] uppercase tracking-widest text-amber-400">transfer</span>}
               </div>
@@ -134,16 +176,23 @@ function CategoriesPage() {
               </div>
             </div>
 
-            {p.children.map((c: any) => (
-              <div key={c.id} className="grid grid-cols-[1fr_140px_120px_88px] gap-2 px-4 py-1.5 border-b border-border/60 items-center hover:bg-secondary/20">
-                <div className="flex items-center gap-2 pl-7 min-w-0">
+            {!isCollapsed && p.children.map((c: any) => (
+              <div
+                key={c.id}
+                draggable
+                onDragStart={(e) => { setDragId(c.id); e.dataTransfer.effectAllowed = "move"; }}
+                onDragEnd={() => { setDragId(null); setDropTarget(null); }}
+                className={`grid grid-cols-[1fr_140px_120px_88px] gap-2 px-4 py-1.5 border-b border-border/60 items-center hover:bg-secondary/20 ${dragId === c.id ? "opacity-40" : ""}`}
+              >
+                <div className="flex items-center gap-1 pl-5 min-w-0">
+                  <GripVertical className="h-3.5 w-3.5 text-muted-foreground/60 cursor-grab active:cursor-grabbing shrink-0" />
                   <input
                     type="color" value={c.color}
                     className="h-4 w-4 rounded cursor-pointer bg-transparent border border-border"
                     onChange={(e) => inlineUpdate.mutate({ id: c.id, name: c.name, color: e.target.value })}
                   />
                   <input
-                    className="bg-transparent text-sm truncate outline-none border-b border-transparent focus:border-primary"
+                    className="bg-transparent text-sm truncate outline-none border-b border-transparent focus:border-primary min-w-0"
                     defaultValue={c.name}
                     onBlur={(e) => {
                       const v = e.target.value.trim();
@@ -177,8 +226,14 @@ function CategoriesPage() {
                 </div>
               </div>
             ))}
+            {!isCollapsed && p.children.length === 0 && !q.trim() && (
+              <div className="px-4 py-2 pl-12 text-[11px] text-muted-foreground italic border-b border-border/60">
+                Sem subcategorias. Arraste uma aqui ou clique em <Plus className="inline h-3 w-3" />.
+              </div>
+            )}
           </div>
-        ))}
+        );
+        })}
 
         {tree.length === 0 && (
           <div className="p-8 text-center text-sm text-muted-foreground">Nenhuma categoria encontrada.</div>

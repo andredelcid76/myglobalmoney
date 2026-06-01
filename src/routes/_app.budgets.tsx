@@ -5,7 +5,7 @@ import { listBudgetsYear, upsertBudget, applyBudgetToYear, deleteBudget, getBudg
 import { formatCurrency } from "@/lib/format";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { ChevronLeft, ChevronRight, ChevronDown, ChevronRightIcon, Copy, Trash2, ArrowLeftRight, Sparkles } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, ChevronRightIcon, Copy, Trash2, ArrowLeftRight, Sparkles, ChevronsDownUp, ChevronsUpDown } from "lucide-react";
 import {
   Popover, PopoverContent, PopoverTrigger,
 } from "@/components/ui/popover";
@@ -606,12 +606,50 @@ function BudgetsMonthlyView() {
     onSuccess: invalidate,
   });
 
+  const [collapsedBuckets, setCollapsedBuckets] = useState<Set<string>>(new Set());
+  const [expandedParents, setExpandedParents] = useState<Set<string>>(new Set());
+
   if (!data) return <div className="text-sm text-muted-foreground">Carregando…</div>;
 
+  // Build parent/children structure with aggregated parent values
+  const allRows = data.rows;
+  const childrenByParent = new Map<string, any[]>();
+  for (const r of allRows) {
+    if (r.parent_id) {
+      const arr = childrenByParent.get(r.parent_id) ?? [];
+      arr.push(r);
+      childrenByParent.set(r.parent_id, arr);
+    }
+  }
+  const parentRows = allRows
+    .filter((r) => r.isParent)
+    .map((p) => {
+      const ch = childrenByParent.get(p.id) ?? [];
+      const agg = ch.reduce(
+        (acc, c) => {
+          acc.budgeted += c.budgeted;
+          acc.carryIn += c.carryIn;
+          acc.effective += c.effective;
+          acc.actual += c.actual;
+          return acc;
+        },
+        { budgeted: p.budgeted, carryIn: p.carryIn, effective: p.effective, actual: p.actual },
+      );
+      const pct = agg.effective > 0 ? agg.actual / agg.effective : (agg.actual > 0 ? Infinity : 0);
+      return { ...p, agg, children: ch, pct: Number.isFinite(pct) ? pct : 0 };
+    });
+
   const rowsByGroup: Record<string, any[]> = { renda: [], fixa: [], variavel: [], poupanca: [] };
-  // Only show parents and standalone categories (children are aggregated inside parent.actual already)
-  const leafs = data.rows.filter((r) => r.isParent);
-  for (const r of leafs) (rowsByGroup[r.group] ?? rowsByGroup.variavel).push(r);
+  for (const r of parentRows) (rowsByGroup[r.group] ?? rowsByGroup.variavel).push(r);
+
+  const toggleBucket = (g: string) => setCollapsedBuckets((s) => {
+    const n = new Set(s); n.has(g) ? n.delete(g) : n.add(g); return n;
+  });
+  const toggleParent = (id: string) => setExpandedParents((s) => {
+    const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n;
+  });
+  const visibleBuckets = GROUP_ORDER.filter((g) => (rowsByGroup[g] ?? []).length > 0);
+  const allCollapsed = visibleBuckets.length > 0 && visibleBuckets.every((g) => collapsedBuckets.has(g));
 
   return (
     <div className="space-y-4">
@@ -619,6 +657,11 @@ function BudgetsMonthlyView() {
         <Button size="icon" variant="outline" onClick={() => setMonth(addMonths(month, -1))}><ChevronLeft className="h-4 w-4" /></Button>
         <div className="min-w-[140px] text-center text-sm font-medium">{monthLabel(month)}</div>
         <Button size="icon" variant="outline" onClick={() => setMonth(addMonths(month, 1))}><ChevronRight className="h-4 w-4" /></Button>
+        <Button size="sm" variant="outline" className="ml-2"
+          onClick={() => allCollapsed ? setCollapsedBuckets(new Set()) : setCollapsedBuckets(new Set(visibleBuckets))}
+          title={allCollapsed ? "Expandir todos os grupos" : "Recolher todos os grupos"}>
+          {allCollapsed ? <ChevronsUpDown className="h-4 w-4" /> : <ChevronsDownUp className="h-4 w-4" />}
+        </Button>
         <div className="ml-auto text-xs text-muted-foreground">
           Dia {data.dayOfMonth}/{data.totalDays} · {Math.round(data.elapsedRatio * 100)}% do mês
         </div>
@@ -646,11 +689,22 @@ function BudgetsMonthlyView() {
       {GROUP_ORDER.map((g) => {
         const rows = rowsByGroup[g] ?? [];
         if (rows.length === 0) return null;
+        const isCollapsed = collapsedBuckets.has(g);
+        const bucketTotals = data.buckets[g];
         return (
           <div key={g} className="rounded-xl border border-border bg-card overflow-hidden">
-            <div className="px-4 py-2 bg-secondary/40 text-xs font-semibold uppercase tracking-widest text-muted-foreground">
-              {GROUP_LABELS[g]}
-            </div>
+            <button
+              onClick={() => toggleBucket(g)}
+              className="w-full px-4 py-2.5 bg-secondary/40 flex items-center gap-2 hover:bg-secondary/60 transition-colors text-left"
+            >
+              {isCollapsed ? <ChevronRightIcon className="h-3.5 w-3.5 text-muted-foreground" /> : <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />}
+              <span className="text-xs font-semibold uppercase tracking-widest text-muted-foreground">{GROUP_LABELS[g]}</span>
+              <span className="text-[10px] text-muted-foreground">({rows.length})</span>
+              <span className="ml-auto text-xs tabular-nums text-muted-foreground">
+                <span className="font-medium text-foreground">{formatCurrency(bucketTotals.actual)}</span> / {formatCurrency(bucketTotals.effective)}
+              </span>
+            </button>
+            {!isCollapsed && (
             <table className="w-full text-sm">
               <thead className="text-xs text-muted-foreground">
                 <tr>
@@ -664,13 +718,36 @@ function BudgetsMonthlyView() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => <MonthlyRow key={r.id} row={r}
-                  onBudget={(v) => mBudget.mutate({ category_id: r.id, amount_usd: v })}
-                  onRollover={(v) => mRO.mutate({ category_id: r.id, enabled: v })}
-                  onGroup={(v) => mGroup.mutate({ id: r.id, budget_group: v as any })}
-                />)}
+                {rows.flatMap((r) => {
+                  const isOpen = expandedParents.has(r.id);
+                  const out = [
+                    <MonthlyRow
+                      key={r.id} row={r}
+                      hasChildren={r.children.length > 0}
+                      isOpen={isOpen}
+                      onToggle={() => toggleParent(r.id)}
+                      onBudget={(v) => mBudget.mutate({ category_id: r.id, amount_usd: v })}
+                      onRollover={(v) => mRO.mutate({ category_id: r.id, enabled: v })}
+                      onGroup={(v) => mGroup.mutate({ id: r.id, budget_group: v as any })}
+                    />,
+                  ];
+                  if (isOpen) {
+                    for (const c of r.children) {
+                      out.push(
+                        <MonthlyRow
+                          key={c.id} row={c} isChild
+                          onBudget={(v) => mBudget.mutate({ category_id: c.id, amount_usd: v })}
+                          onRollover={(v) => mRO.mutate({ category_id: c.id, enabled: v })}
+                          onGroup={(v) => mGroup.mutate({ id: c.id, budget_group: v as any })}
+                        />
+                      );
+                    }
+                  }
+                  return out;
+                })}
               </tbody>
             </table>
+            )}
           </div>
         );
       })}
@@ -678,10 +755,13 @@ function BudgetsMonthlyView() {
   );
 }
 
-function MonthlyRow({ row, onBudget, onRollover, onGroup }: {
+function MonthlyRow({ row, onBudget, onRollover, onGroup, hasChildren, isOpen, onToggle, isChild }: {
   row: any; onBudget: (v: number) => void; onRollover: (v: boolean) => void; onGroup: (v: string) => void;
+  hasChildren?: boolean; isOpen?: boolean; onToggle?: () => void; isChild?: boolean;
 }) {
   const [draft, setDraft] = useState(String(row.budgeted ?? 0));
+  // For parents with children: show aggregated values; budget input still edits parent-only budget
+  const disp = row.agg ?? { budgeted: row.budgeted, carryIn: row.carryIn, effective: row.effective, actual: row.actual };
   const pct = Math.min(row.pct, 1.5);
   const paceIcon = row.pace === "ahead" ? <TrendingDown className="h-3 w-3 text-success" />
     : row.pace === "behind" ? <TrendingUp className="h-3 w-3 text-amber-400" />
@@ -693,28 +773,39 @@ function MonthlyRow({ row, onBudget, onRollover, onGroup }: {
     : row.pace === "over" ? "estouro"
     : row.pace === "ontrack" ? "no ritmo" : "—";
   return (
-    <tr className="border-t border-border hover:bg-secondary/20">
+    <tr className={`border-t border-border hover:bg-secondary/20 ${isChild ? "bg-secondary/5" : ""}`}>
       <td className="px-3 py-2">
-        <div className="flex items-center gap-2">
-          <div className="h-2.5 w-2.5 rounded-full" style={{ background: row.color }} />
-          <span className="font-medium">{row.name}</span>
+        <div className={`flex items-center gap-2 ${isChild ? "pl-7" : ""}`}>
+          {hasChildren ? (
+            <button onClick={onToggle} className="text-muted-foreground hover:text-foreground -ml-1">
+              {isOpen ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRightIcon className="h-3.5 w-3.5" />}
+            </button>
+          ) : (!isChild && <span className="w-3.5" />)}
+          <div className={`rounded-full ${isChild ? "h-2 w-2 opacity-70" : "h-2.5 w-2.5"}`} style={{ background: row.color }} />
+          <span className={isChild ? "text-muted-foreground" : "font-medium"}>{row.name}</span>
+          {hasChildren && <span className="text-[10px] text-muted-foreground">({row.children?.length ?? 0})</span>}
         </div>
       </td>
       <td className="px-3 py-2 text-right">
-        <input type="number" step="10" value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={() => { const n = Number(draft); if (isFinite(n) && n !== row.budgeted) onBudget(n); }}
-          className="w-24 bg-input border border-border rounded px-2 py-1 text-right tabular-nums text-sm" />
+        <div className="flex flex-col items-end">
+          <input type="number" step="10" value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onBlur={() => { const n = Number(draft); if (isFinite(n) && n !== row.budgeted) onBudget(n); }}
+            className="w-24 bg-input border border-border rounded px-2 py-1 text-right tabular-nums text-sm" />
+          {hasChildren && disp.budgeted !== row.budgeted && (
+            <span className="text-[10px] text-muted-foreground mt-0.5">Σ {formatCurrency(disp.budgeted)}</span>
+          )}
+        </div>
       </td>
-      <td className={`px-3 py-2 text-right tabular-nums text-xs ${row.carryIn > 0 ? "text-success" : row.carryIn < 0 ? "text-destructive" : "text-muted-foreground"}`}>
-        {row.carryIn !== 0 ? formatCurrency(row.carryIn) : "—"}
+      <td className={`px-3 py-2 text-right tabular-nums text-xs ${disp.carryIn > 0 ? "text-success" : disp.carryIn < 0 ? "text-destructive" : "text-muted-foreground"}`}>
+        {disp.carryIn !== 0 ? formatCurrency(disp.carryIn) : "—"}
       </td>
-      <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(row.actual)}</td>
+      <td className="px-3 py-2 text-right tabular-nums">{formatCurrency(disp.actual)}</td>
       <td className="px-3 py-2">
         <div className="h-1.5 rounded-full bg-secondary overflow-hidden">
           <div className={`h-full ${row.pace === "over" ? "bg-destructive" : "bg-primary"}`} style={{ width: `${pct * 100}%` }} />
         </div>
-        <div className="text-[10px] text-muted-foreground mt-0.5">{Math.round(row.pct * 100)}% de {formatCurrency(row.effective)}</div>
+        <div className="text-[10px] text-muted-foreground mt-0.5">{Math.round(row.pct * 100)}% de {formatCurrency(disp.effective)}</div>
       </td>
       <td className="px-3 py-2 text-right text-xs">
         <span className="inline-flex items-center gap-1">{paceIcon}{paceText}</span>
