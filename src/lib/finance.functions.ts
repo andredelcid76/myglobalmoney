@@ -259,7 +259,19 @@ export const listAccounts = createServerFn({ method: "POST" })
   .handler(async ({ context }) => {
     const { data, error } = await context.supabase.from("accounts").select("*").eq("user_id", context.userId).order("created_at");
     if (error) throw new Error(error.message);
-    return { accounts: data ?? [] };
+    const today = new Date().toISOString().slice(0, 10);
+    const { data: tx } = await context.supabase.from("transactions")
+      .select("account_id, amount").eq("user_id", context.userId).lte("date", today);
+    const sumByAcc = new Map<string, number>();
+    for (const t of tx ?? []) {
+      const k = (t as any).account_id as string;
+      sumByAcc.set(k, (sumByAcc.get(k) ?? 0) + Number((t as any).amount ?? 0));
+    }
+    const accounts = (data ?? []).map((a: any) => ({
+      ...a,
+      current_balance: Number(a.initial_balance) + (sumByAcc.get(a.id) ?? 0),
+    }));
+    return { accounts };
   });
 
 export const upsertAccount = createServerFn({ method: "POST" })
