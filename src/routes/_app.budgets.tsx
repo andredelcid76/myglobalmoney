@@ -345,26 +345,35 @@ function FragmentRows({
           const spent = parent.spent[m];
           const over = aggBudget > 0 && spent > aggBudget;
           const ratio = aggBudget > 0 ? Math.min(spent / aggBudget, 1.5) : 0;
-          // Parent cell edits parent's own budget (separate from children's)
+          const lockedToChildren = children.length > 0;
           return (
             <td key={m} className="px-1.5 py-1 align-top">
-              <CellEditor
-                value={parent.budgets[m]}
-                type={parent.types[m] ?? "flex"}
-                rollover={parent.rollovers[m]}
-                displayValue={aggBudget > 0 ? aggBudget : null}
-                suggestion={parentSugg}
-                onSave={(amt, t, ro) =>
-                  onUpsert({
-                    category_id: parent.id,
-                    month: monthKey(year, m),
-                    amount_usd: amt,
-                    budget_type: t,
-                    rollover_enabled: ro,
-                  })
-                }
-                onClear={() => onDelete({ category_id: parent.id, month: monthKey(year, m) })}
-              />
+              {lockedToChildren ? (
+                <div
+                  className="w-full rounded border border-dashed border-border/70 bg-secondary/20 px-2 py-1 text-right tabular-nums text-muted-foreground"
+                  title="Σ subcategorias — edite as subcategorias para alterar"
+                >
+                  {aggBudget > 0 ? formatCurrency(aggBudget) : "—"}
+                </div>
+              ) : (
+                <CellEditor
+                  value={parent.budgets[m]}
+                  type={parent.types[m] ?? "flex"}
+                  rollover={parent.rollovers[m]}
+                  displayValue={aggBudget > 0 ? aggBudget : null}
+                  suggestion={parentSugg}
+                  onSave={(amt, t, ro) =>
+                    onUpsert({
+                      category_id: parent.id,
+                      month: monthKey(year, m),
+                      amount_usd: amt,
+                      budget_type: t,
+                      rollover_enabled: ro,
+                    })
+                  }
+                  onClear={() => onDelete({ category_id: parent.id, month: monthKey(year, m) })}
+                />
+              )}
               <div className="mt-1 h-1 rounded-full bg-secondary overflow-hidden">
                 <div className={`h-full ${over ? "bg-destructive" : "bg-primary"}`} style={{ width: `${ratio * 100}%` }} />
               </div>
