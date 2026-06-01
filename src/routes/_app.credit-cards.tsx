@@ -79,16 +79,30 @@ function CardItem({ card }: { card: any }) {
         {card.configured ? (
           <div className="mt-4 grid grid-cols-3 gap-3 text-xs">
             <div>
-              <div className="text-muted-foreground">Fatura atual</div>
-              <div className="text-lg font-semibold tabular-nums">{formatCurrency(card.currentTotalUsd)}</div>
+              <div className="text-muted-foreground">
+                {card.closedUnpaidUsd > 0.005 ? "Fatura fechada" : "Fatura em aberto"}
+              </div>
+              <div className="text-lg font-semibold tabular-nums">
+                {formatCurrency(card.closedUnpaidUsd > 0.005 ? card.closedUnpaidUsd : card.currentTotalUsd)}
+              </div>
+              {card.closedUnpaidUsd > 0.005 && (
+                <div className="text-[10px] text-muted-foreground">
+                  + em aberto: {formatCurrency(card.currentTotalUsd)}
+                </div>
+              )}
             </div>
             <div>
-              <div className="text-muted-foreground">Vencimento</div>
+              <div className="text-muted-foreground">
+                {card.nextDueIsClosed ? "Vence (fechada)" : "Vencimento"}
+              </div>
               <div className="font-semibold">{formatDate(card.nextDue)}</div>
               {daysUntilDue !== null && (
                 <div className={`text-[10px] ${daysUntilDue < 0 ? "text-destructive" : daysUntilDue <= 7 ? "text-amber-500" : "text-muted-foreground"}`}>
                   {daysUntilDue < 0 ? `${Math.abs(daysUntilDue)}d atrasado` : daysUntilDue === 0 ? "hoje" : `em ${daysUntilDue}d`}
                 </div>
+              )}
+              {card.nextDueIsClosed && card.openCycle?.due && (
+                <div className="text-[10px] text-muted-foreground">próxima {formatDate(card.openCycle.due)}</div>
               )}
             </div>
             <div>
