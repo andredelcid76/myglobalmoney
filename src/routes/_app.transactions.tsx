@@ -756,6 +756,7 @@ function NewTransactionDialog({ accounts, categories, defaultAccountId, onClose 
   const [categoryId, setCategoryId] = useState("");
   const [currency, setCurrency] = useState<"USD" | "BRL">("USD");
   const [notes, setNotes] = useState("");
+  const [amountTo, setAmountTo] = useState("");
   const create = useServerFn(createTransaction);
   const transfer = useServerFn(createTransfer);
   const qc = useQueryClient();
@@ -766,9 +767,12 @@ function NewTransactionDialog({ accounts, categories, defaultAccountId, onClose 
       if (kind === "transfer") {
         if (!toAccountId) throw new Error("Selecione a conta de destino");
         if (toAccountId === accountId) throw new Error("Contas devem ser diferentes");
+        const toRaw = Number(amountTo);
         return transfer({ data: {
           date, from_account_id: accountId, to_account_id: toAccountId,
-          amount: Math.abs(raw), currency, notes: notes || null,
+          amount: Math.abs(raw),
+          amount_to: amountTo && !Number.isNaN(toRaw) ? Math.abs(toRaw) : undefined,
+          notes: notes || null,
         }});
       }
       const signed = kind === "expense" ? -Math.abs(raw) : Math.abs(raw);
@@ -787,6 +791,11 @@ function NewTransactionDialog({ accounts, categories, defaultAccountId, onClose 
     onError: (e: any) => toast.error(e.message),
   });
   const isTransfer = kind === "transfer";
+  const fromAcc = accounts.find((a: any) => a.id === accountId);
+  const toAcc = accounts.find((a: any) => a.id === toAccountId);
+  const fromCur = (fromAcc?.currency as string) ?? "USD";
+  const toCur = (toAcc?.currency as string) ?? "USD";
+  const crossCurrency = isTransfer && !!toAcc && fromCur !== toCur;
   return (
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-lg">
@@ -814,7 +823,7 @@ function NewTransactionDialog({ accounts, categories, defaultAccountId, onClose 
               <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
             </div>
             <div>
-              <Label className="text-xs">Valor</Label>
+              <Label className="text-xs">{isTransfer ? `Valor (${fromCur})` : "Valor"}</Label>
               <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0,00" />
             </div>
           </div>
@@ -839,7 +848,7 @@ function NewTransactionDialog({ accounts, categories, defaultAccountId, onClose 
                   className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm">
                   <option value="">— escolha —</option>
                   {accounts.filter((a: any) => a.id !== accountId).map((a: any) => (
-                    <option key={a.id} value={a.id}>{a.name}</option>
+                    <option key={a.id} value={a.id}>{a.name} ({a.currency})</option>
                   ))}
                 </select>
               </div>
@@ -854,14 +863,15 @@ function NewTransactionDialog({ accounts, categories, defaultAccountId, onClose 
               </div>
             )}
           </div>
-          {isTransfer && (
+          {crossCurrency && (
             <div>
-              <Label className="text-xs">Moeda</Label>
-              <select value={currency} onChange={(e) => setCurrency(e.target.value as any)}
-                className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm">
-                <option value="USD">USD</option>
-                <option value="BRL">BRL</option>
-              </select>
+              <Label className="text-xs">Valor recebido ({toCur}) — opcional</Label>
+              <Input type="number" step="0.01" value={amountTo}
+                onChange={(e) => setAmountTo(e.target.value)}
+                placeholder="Deixe em branco para converter automaticamente" />
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Conversão automática usa a taxa USD/BRL do dia. Para datas futuras, usamos a taxa mais recente disponível como projeção.
+              </p>
             </div>
           )}
           {!isTransfer && (
@@ -882,7 +892,7 @@ function NewTransactionDialog({ accounts, categories, defaultAccountId, onClose 
           </div>
           <p className="text-xs text-muted-foreground">
             {isTransfer
-              ? "Cria dois lançamentos vinculados: saída na origem e entrada no destino, marcados como transferência."
+              ? "Cria dois lançamentos vinculados: saída na origem (na moeda da conta de origem) e entrada no destino (na moeda da conta de destino), convertidos via FX quando as moedas diferem."
               : "Você pode usar uma data futura para registrar uma transação agendada, ou uma data passada para registrar algo que esqueceu."}
           </p>
         </div>
