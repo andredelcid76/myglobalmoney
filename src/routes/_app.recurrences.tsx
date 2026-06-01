@@ -494,3 +494,13 @@ function Card({ label, value, accent }: { label: string; value: string; accent?:
     </div>
   );
 }
+
+function SortBtn({ label, active, dir, onClick, right }: { label: string; active: boolean; dir: "asc" | "desc"; onClick: () => void; right?: boolean }) {
+  return (
+    <button onClick={onClick} className={`inline-flex items-center gap-1 hover:text-foreground ${active ? "text-foreground" : ""} ${right ? "ml-auto" : ""}`}>
+      {label}
+      <ArrowUpDown className={`h-3 w-3 ${active ? "opacity-100" : "opacity-40"}`} />
+      {active && <span className="text-[9px]">{dir === "asc" ? "↑" : "↓"}</span>}
+    </button>
+  );
+}
