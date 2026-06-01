@@ -66,6 +66,65 @@ export const bulkUpdateTxCategory = createServerFn({ method: "POST" })
     return { ok: true, updated: data.ids.length };
   });
 
+const CreateTxInput = z.object({
+  date: z.string(),
+  merchant: z.string().min(1).max(200),
+  notes: z.string().max(500).nullable().optional(),
+  amount: z.number(),
+  currency: z.enum(["USD", "BRL"]).default("USD"),
+  account_id: z.string().uuid(),
+  category_id: z.string().uuid().nullable().optional(),
+  is_transfer: z.boolean().default(false),
+  is_pending: z.boolean().default(false),
+  tags: z.array(z.string()).optional().nullable(),
+});
+
+export const createTransaction = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => CreateTxInput.parse(d))
+  .handler(async ({ data, context }) => {
+    let exchange_rate = 1;
+    if (data.currency !== "USD") {
+      const { data: rate } = await context.supabase
+        .from("exchange_rates")
+        .select("rate, date")
+        .eq("base", data.currency)
+        .eq("quote", "USD")
+        .lte("date", data.date)
+        .order("date", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (rate) exchange_rate = Number(rate.rate);
+    }
+    const amount_usd = Number((data.amount * exchange_rate).toFixed(2));
+    const { error } = await context.supabase.from("transactions").insert({
+      user_id: context.userId,
+      date: data.date,
+      merchant: data.merchant,
+      notes: data.notes ?? null,
+      amount: data.amount,
+      currency: data.currency,
+      amount_usd,
+      exchange_rate,
+      account_id: data.account_id,
+      category_id: data.category_id ?? null,
+      is_transfer: data.is_transfer,
+      is_pending: data.is_pending,
+      tags: data.tags ?? null,
+    });
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
+export const deleteTransaction = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ id: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase.from("transactions").delete().eq("id", data.id).eq("user_id", context.userId);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
 const TxImport = z.object({
   date: z.string(),
   merchant: z.string(),
