@@ -159,7 +159,7 @@ function CardItem({ card }: { card: any }) {
                             <tr key={t.id} className="border-t border-border/40">
                               <td className="py-1.5 text-muted-foreground whitespace-nowrap pr-2">{formatDate(t.date)}</td>
                               <td className="py-1.5 truncate">{t.merchant}</td>
-                              <td className="py-1.5 text-right tabular-nums">{formatCurrency(Math.abs(Number(t.amount_usd)))}</td>
+                              <td className="py-1.5 text-right tabular-nums">{formatCurrency(Math.abs(Number(t.amount ?? t.amount_usd)), (t.currency as string) ?? "USD")}</td>
                             </tr>
                           ))}
                       </tbody>
