@@ -4,12 +4,14 @@ import { useServerFn } from "@tanstack/react-start";
 import {
   listRecurrences, upsertRecurrence, deleteRecurrence,
   detectRecurrences, saveDetectedRecurrences,
+  bulkUpdateRecurrences, bulkDeleteRecurrences,
 } from "@/lib/recurrences.functions";
 import { formatCurrency } from "@/lib/format";
 import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Trash2, Wand2, Repeat, Check } from "lucide-react";
+import { Plus, Trash2, Wand2, Repeat, Check, CheckSquare } from "lucide-react";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/_app/recurrences")({ component: RecurrencesPage });
 
@@ -48,12 +50,17 @@ function RecurrencesPage() {
   const del = useServerFn(deleteRecurrence);
   const detect = useServerFn(detectRecurrences);
   const saveDetected = useServerFn(saveDetectedRecurrences);
+  const bulkUpdate = useServerFn(bulkUpdateRecurrences);
+  const bulkDelete = useServerFn(bulkDeleteRecurrences);
   const qc = useQueryClient();
 
   const { data } = useQuery({ queryKey: ["recurrences"], queryFn: () => fetchList() });
   const [form, setForm] = useState<Form | null>(null);
   const [suggestions, setSuggestions] = useState<any[] | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkField, setBulkField] = useState<"account" | "category" | "cadence" | "amount" | "">("");
+  const [bulkValue, setBulkValue] = useState<string>("");
 
   const save = useMutation({
     mutationFn: (v: Form) => upsert({ data: { ...v, merchant_pattern: v.merchant_pattern || null, notes: v.notes || null } as any }),
@@ -62,6 +69,24 @@ function RecurrencesPage() {
   const remove = useMutation({
     mutationFn: (id: string) => del({ data: { id } }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["recurrences"] }),
+  });
+  const mBulkUpd = useMutation({
+    mutationFn: (patch: any) => bulkUpdate({ data: { ids: Array.from(selectedIds), patch } }),
+    onSuccess: (r) => {
+      toast.success(`${r.updated} recorrência(s) atualizada(s)`);
+      setSelectedIds(new Set()); setBulkField(""); setBulkValue("");
+      qc.invalidateQueries({ queryKey: ["recurrences"] });
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+  const mBulkDel = useMutation({
+    mutationFn: () => bulkDelete({ data: { ids: Array.from(selectedIds) } }),
+    onSuccess: (r) => {
+      toast.success(`${r.deleted} recorrência(s) excluída(s)`);
+      setSelectedIds(new Set());
+      qc.invalidateQueries({ queryKey: ["recurrences"] });
+    },
+    onError: (e: any) => toast.error(e.message),
   });
   const runDetect = useMutation({
     mutationFn: () => detect(),
@@ -84,6 +109,35 @@ function RecurrencesPage() {
 
   const accountName = (id: string | null) => data?.accounts.find((a: any) => a.id === id)?.name ?? "—";
   const categoryName = (id: string | null) => data?.categories.find((c: any) => c.id === id)?.name ?? "Sem categoria";
+
+  const recs = data?.recurrences ?? [];
+  const allSelected = recs.length > 0 && recs.every((r: any) => selectedIds.has(r.id));
+  const toggleAll = () => {
+    if (allSelected) setSelectedIds(new Set());
+    else setSelectedIds(new Set(recs.map((r: any) => r.id)));
+  };
+  const toggleOne = (id: string) => {
+    setSelectedIds((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  };
+
+  const applyBulk = () => {
+    if (!bulkField) return;
+    let patch: any = {};
+    if (bulkField === "account") patch.account_id = bulkValue === "__none__" ? null : bulkValue || null;
+    else if (bulkField === "category") patch.category_id = bulkValue === "__none__" ? null : bulkValue || null;
+    else if (bulkField === "cadence") patch.cadence = bulkValue;
+    else if (bulkField === "amount") {
+      const v = Number(bulkValue);
+      if (Number.isNaN(v)) { toast.error("Valor inválido"); return; }
+      patch.amount_usd = v;
+    }
+    if (Object.keys(patch).length === 0) return;
+    mBulkUpd.mutate(patch);
+  };
 
   return (
     <div className="space-y-6">
@@ -145,6 +199,57 @@ function RecurrencesPage() {
       )}
 
       <div className="rounded-xl border border-border bg-card overflow-hidden">
+        {selectedIds.size > 0 && (
+          <div className="px-3 py-2 bg-primary/5 border-b border-primary/30 flex flex-wrap items-center gap-2">
+            <CheckSquare className="h-4 w-4 text-primary" />
+            <span className="text-sm font-medium">{selectedIds.size} selecionada(s)</span>
+            <span className="text-xs text-muted-foreground mx-1">·</span>
+            <span className="text-xs text-muted-foreground">Alterar</span>
+            <select value={bulkField} onChange={(e) => { setBulkField(e.target.value as any); setBulkValue(""); }}
+              className="rounded-md border border-border bg-input px-2 py-1 text-sm">
+              <option value="">— campo —</option>
+              <option value="account">Conta</option>
+              <option value="category">Categoria</option>
+              <option value="cadence">Cadência</option>
+              <option value="amount">Valor (USD)</option>
+            </select>
+            {bulkField === "account" && (
+              <select value={bulkValue} onChange={(e) => setBulkValue(e.target.value)}
+                className="rounded-md border border-border bg-input px-2 py-1 text-sm">
+                <option value="">— conta —</option>
+                <option value="__none__">Sem conta</option>
+                {data?.accounts.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            )}
+            {bulkField === "category" && (
+              <select value={bulkValue} onChange={(e) => setBulkValue(e.target.value)}
+                className="rounded-md border border-border bg-input px-2 py-1 text-sm">
+                <option value="">— categoria —</option>
+                <option value="__none__">Sem categoria</option>
+                {data?.categories.map((c: any) => <option key={c.id} value={c.id}>{c.parent_id ? "  ↳ " : ""}{c.name}</option>)}
+              </select>
+            )}
+            {bulkField === "cadence" && (
+              <select value={bulkValue} onChange={(e) => setBulkValue(e.target.value)}
+                className="rounded-md border border-border bg-input px-2 py-1 text-sm">
+                <option value="">— cadência —</option>
+                {Object.entries(cadenceLabel).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+            )}
+            {bulkField === "amount" && (
+              <Input type="number" step="0.01" value={bulkValue} onChange={(e) => setBulkValue(e.target.value)}
+                placeholder="USD" className="w-28 h-8" />
+            )}
+            <Button size="sm" disabled={!bulkField || !bulkValue || mBulkUpd.isPending} onClick={applyBulk}>
+              Aplicar
+            </Button>
+            <Button size="sm" variant="ghost" className="text-destructive ml-auto"
+              onClick={() => { if (confirm(`Excluir ${selectedIds.size} recorrência(s)?`)) mBulkDel.mutate(); }}>
+              Excluir
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}>Limpar</Button>
+          </div>
+        )}
         {(data?.recurrences ?? []).length === 0 ? (
           <div className="p-8 text-center text-sm text-muted-foreground">
             <Repeat className="h-8 w-8 mx-auto mb-2 opacity-50" />
@@ -154,6 +259,9 @@ function RecurrencesPage() {
           <table className="w-full text-sm">
             <thead className="bg-secondary/40 text-xs text-muted-foreground">
               <tr>
+                <th className="px-3 py-2 w-8">
+                  <input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="Selecionar todas" />
+                </th>
                 <th className="text-left px-4 py-2">Nome</th>
                 <th className="text-left px-4 py-2">Categoria</th>
                 <th className="text-left px-4 py-2">Conta</th>
@@ -164,14 +272,19 @@ function RecurrencesPage() {
               </tr>
             </thead>
             <tbody>
-              {data!.recurrences.map((r: any) => (
-                <tr key={r.id} className={`border-t border-border hover:bg-secondary/30 cursor-pointer ${!r.is_active ? "opacity-50" : ""}`}
+              {data!.recurrences.map((r: any) => {
+                const isSel = selectedIds.has(r.id);
+                return (
+                <tr key={r.id} className={`border-t border-border hover:bg-secondary/30 cursor-pointer ${!r.is_active ? "opacity-50" : ""} ${isSel ? "bg-primary/5" : ""}`}
                     onClick={() => setForm({
                       id: r.id, name: r.name, merchant_pattern: r.merchant_pattern ?? "",
                       account_id: r.account_id, category_id: r.category_id, amount_usd: Number(r.amount_usd),
                       cadence: r.cadence, day_of_month: r.day_of_month, next_date: r.next_date,
                       is_income: r.is_income, is_active: r.is_active, notes: r.notes ?? "",
                     })}>
+                  <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+                    <input type="checkbox" checked={isSel} onChange={() => toggleOne(r.id)} aria-label="Selecionar" />
+                  </td>
                   <td className="px-4 py-2">
                     <div className="font-medium">{r.name}</div>
                     {r.source === "auto" && <div className="text-[10px] text-muted-foreground uppercase tracking-widest">auto</div>}
@@ -190,7 +303,8 @@ function RecurrencesPage() {
                     </button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         )}
