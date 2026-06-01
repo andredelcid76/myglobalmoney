@@ -105,7 +105,7 @@ export const createTransfer = createServerFn({ method: "POST" })
       if (rate) exchange_rate = Number(rate.rate);
     }
     const amount_usd = Number((data.amount * exchange_rate).toFixed(2));
-    const groupId = (globalThis.crypto ?? (await import("crypto"))).randomUUID();
+    const groupId = crypto.randomUUID();
     const base = {
       user_id: context.userId,
       date: data.date,
