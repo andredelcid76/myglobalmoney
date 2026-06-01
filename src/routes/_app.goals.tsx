@@ -6,6 +6,7 @@ import { formatCurrency } from "@/lib/format";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Label } from "@/components/ui/label";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Plus, Trash2, Pencil, Target, Plus as PlusIcon, Minus } from "lucide-react";
@@ -159,7 +160,12 @@ function ContributePopover({ onContribute }: { onContribute: (amt: number) => vo
             <Minus className="h-3 w-3" /> Retirar
           </Button>
         </div>
-        <Input type="number" step="10" placeholder="USD" value={amt} onChange={(e) => setAmt(e.target.value)} autoFocus />
+        <MoneyInput
+          size="lg" showStepper step={50} currency="USD"
+          value={amt}
+          onValueChange={(n) => setAmt(n == null ? "" : String(n))}
+          autoFocus
+        />
         <Button size="sm" className="w-full" onClick={() => {
           const n = Number(amt); if (!isFinite(n) || n <= 0) return;
           onContribute(mode === "add" ? n : -n);
@@ -202,17 +208,20 @@ function GoalDialog({ initial, onSave, trigger }: { initial?: any; onSave: (v: a
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label className="text-xs">Alvo (USD)</Label>
-              <Input type="number" step="100" value={target} onChange={(e) => setTarget(e.target.value)} />
+              <MoneyInput size="lg" showStepper step={100} currency="USD"
+                value={target} onValueChange={(n) => setTarget(n == null ? "" : String(n))} />
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Já acumulado (USD)</Label>
-              <Input type="number" step="100" value={current} onChange={(e) => setCurrent(e.target.value)} />
+              <MoneyInput size="lg" showStepper step={100} currency="USD"
+                value={current} onValueChange={(n) => setCurrent(n == null ? "" : String(n))} />
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label className="text-xs">Mensal (USD)</Label>
-              <Input type="number" step="10" value={monthly} onChange={(e) => setMonthly(e.target.value)} />
+              <MoneyInput showStepper step={10} currency="USD"
+                value={monthly} onValueChange={(n) => setMonthly(n == null ? "" : String(n))} />
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Data alvo</Label>

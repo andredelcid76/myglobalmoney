@@ -7,6 +7,7 @@ import { getLedgerView } from "@/lib/ledger.functions";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { useMemo, useState } from "react";
 import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
@@ -824,7 +825,13 @@ function NewTransactionDialog({ accounts, categories, defaultAccountId, onClose 
             </div>
             <div>
               <Label className="text-xs">{isTransfer ? `Valor (${fromCur})` : "Valor"}</Label>
-              <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0,00" />
+              <MoneyInput
+                size="lg" showStepper step={10}
+                currency={isTransfer ? fromCur : currency}
+                value={amount}
+                onValueChange={(n) => setAmount(n == null ? "" : String(n))}
+                autoFocus
+              />
             </div>
           </div>
           {!isTransfer && (
@@ -866,9 +873,12 @@ function NewTransactionDialog({ accounts, categories, defaultAccountId, onClose 
           {crossCurrency && (
             <div>
               <Label className="text-xs">Valor recebido ({toCur}) — opcional</Label>
-              <Input type="number" step="0.01" value={amountTo}
-                onChange={(e) => setAmountTo(e.target.value)}
-                placeholder="Deixe em branco para converter automaticamente" />
+              <MoneyInput
+                currency={toCur}
+                value={amountTo}
+                onValueChange={(n) => setAmountTo(n == null ? "" : String(n))}
+                placeholder="Auto"
+              />
               <p className="text-[11px] text-muted-foreground mt-1">
                 Conversão automática usa a taxa USD/BRL do dia. Para datas futuras, usamos a taxa mais recente disponível como projeção.
               </p>
