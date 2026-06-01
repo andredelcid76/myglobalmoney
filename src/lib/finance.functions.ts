@@ -236,6 +236,11 @@ export const setAccountBalanceToday = createServerFn({ method: "POST" })
       .select("id,currency,initial_balance,name").eq("id", data.account_id).eq("user_id", userId).maybeSingle();
     if (accErr || !acc) throw new Error("Conta não encontrada");
     const cur = (acc.currency as string) ?? "USD";
+    // Remove any existing "Ajuste de saldo" rows for this account on this date so the
+    // operation is idempotent (no stacking of duplicate adjustments on rapid re-clicks).
+    await supabase.from("transactions").delete()
+      .eq("user_id", userId).eq("account_id", data.account_id)
+      .eq("date", today).eq("merchant", "Ajuste de saldo");
     const { data: tx } = await supabase.from("transactions")
       .select("amount").eq("user_id", userId).eq("account_id", data.account_id).lte("date", today);
     const current = Number(acc.initial_balance) + (tx ?? []).reduce((s, t: any) => s + Number(t.amount ?? 0), 0);
