@@ -57,7 +57,7 @@ export const getCreditCardStatements = createServerFn({ method: "POST" })
     const { supabase, userId } = context;
     const [accRes, txRes] = await Promise.all([
       supabase.from("accounts").select("*").eq("user_id", userId).eq("type", "credit_card").eq("is_archived", false),
-      supabase.from("transactions").select("*").eq("user_id", userId).eq("is_transfer", false),
+      supabase.from("transactions").select("*").eq("user_id", userId),
     ]);
     if (accRes.error) throw new Error(accRes.error.message);
     if (txRes.error) throw new Error(txRes.error.message);
@@ -69,7 +69,11 @@ export const getCreditCardStatements = createServerFn({ method: "POST" })
     const cards = accounts.map((a: any) => {
       const closing = a.closing_day ?? null;
       const due = a.due_day ?? null;
-      const cardTx = allTx.filter((t: any) => t.account_id === a.id);
+      const allCardTx = allTx.filter((t: any) => t.account_id === a.id);
+      const cardTx = allCardTx.filter((t: any) => !t.is_transfer);
+      // total owed today (includes payments / transfers reducing the debt)
+      const balance = Number(a.initial_balance || 0) + allCardTx.reduce((s: number, t: any) => s + Number(t.amount_usd || 0), 0);
+      const totalOwed = Math.max(0, -balance);
 
       if (!closing || !due) {
         return {
@@ -77,6 +81,7 @@ export const getCreditCardStatements = createServerFn({ method: "POST" })
           configured: false,
           statements: [] as any[],
           currentTotalUsd: 0,
+          totalOwedUsd: totalOwed,
           openTransactions: cardTx,
         };
       }
@@ -110,19 +115,30 @@ export const getCreditCardStatements = createServerFn({ method: "POST" })
         };
       };
 
-      const stPrev = buildSt(previous, "Anterior");
-      const stCur = buildSt(current, "Atual (em aberto)");
+      const stPrev = buildSt(previous, "Fechada (a pagar)");
+      const stCur = buildSt(current, "Em aberto");
       const stNext = buildSt(next, "Próxima");
+      // Closed-unpaid = total owed minus what's already in the open cycle.
+      // This captures legacy initial_balance and any prior closed cycles.
+      const closedUnpaidUsd = Math.max(0, totalOwed - stCur.totalUsd);
+      stPrev.totalUsd = Math.max(stPrev.totalUsd, closedUnpaidUsd);
 
-      const utilization = a.credit_limit_usd ? stCur.totalUsd / Number(a.credit_limit_usd) : null;
+      const todayStr = ymd(today);
+      const hasClosed = closedUnpaidUsd > 0.005 && stPrev.due >= todayStr;
+      const utilization = a.credit_limit_usd ? (stCur.totalUsd + closedUnpaidUsd) / Number(a.credit_limit_usd) : null;
 
       return {
         account: a,
         configured: true,
         statements: [stPrev, stCur, stNext],
         currentTotalUsd: stCur.totalUsd,
+        closedUnpaidUsd,
+        totalOwedUsd: totalOwed,
         utilization,
-        nextDue: stCur.due,
+        nextDue: hasClosed ? stPrev.due : stCur.due,
+        nextDueIsClosed: hasClosed,
+        openCycle: { start: stCur.start, close: stCur.close, due: stCur.due },
+        previousCycle: { start: stPrev.start, close: stPrev.close, due: stPrev.due },
         openTransactions: stCur.transactions,
       };
     });
