@@ -86,42 +86,80 @@ export const createTransfer = createServerFn({ method: "POST" })
     from_account_id: z.string().uuid(),
     to_account_id: z.string().uuid(),
     amount: z.number().positive(),
-    currency: z.enum(["USD", "BRL"]).default("USD"),
+    amount_to: z.number().positive().optional(),
     notes: z.string().max(500).nullable().optional(),
   }).parse(d))
   .handler(async ({ data, context }) => {
     if (data.from_account_id === data.to_account_id) throw new Error("Contas devem ser diferentes");
-    let exchange_rate = 1;
-    if (data.currency !== "USD") {
-      const { data: rate } = await context.supabase
-        .from("exchange_rates")
-        .select("rate")
-        .eq("base", data.currency)
-        .eq("quote", "USD")
-        .lte("date", data.date)
-        .order("date", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (rate) exchange_rate = Number(rate.rate);
+    // Fetch both accounts to know their currencies
+    const { data: accs, error: accErr } = await context.supabase
+      .from("accounts").select("id,currency")
+      .in("id", [data.from_account_id, data.to_account_id])
+      .eq("user_id", context.userId);
+    if (accErr) throw new Error(accErr.message);
+    const from = accs?.find((a) => a.id === data.from_account_id);
+    const to = accs?.find((a) => a.id === data.to_account_id);
+    if (!from || !to) throw new Error("Conta não encontrada");
+    const fromCur = (from.currency as string) ?? "USD";
+    const toCur = (to.currency as string) ?? "USD";
+
+    // Resolve USD/BRL rate (rate = BRL per USD). For future/missing dates, fall back to latest.
+    let usdBrl = 1;
+    if (fromCur !== toCur || fromCur === "BRL" || toCur === "BRL") {
+      const today = new Date().toISOString().slice(0, 10);
+      const lookup = data.date > today ? today : data.date;
+      const { data: r1 } = await context.supabase
+        .from("exchange_rates").select("rate,date")
+        .eq("base", "USD").eq("quote", "BRL")
+        .lte("date", lookup)
+        .order("date", { ascending: false }).limit(1).maybeSingle();
+      if (r1) usdBrl = Number(r1.rate);
+      else {
+        const { data: r2 } = await context.supabase
+          .from("exchange_rates").select("rate,date")
+          .eq("base", "USD").eq("quote", "BRL")
+          .order("date", { ascending: false }).limit(1).maybeSingle();
+        if (r2) usdBrl = Number(r2.rate);
+      }
     }
-    const amount_usd = Number((data.amount * exchange_rate).toFixed(2));
+    const toUsd = (amt: number, cur: string) => cur === "USD" ? amt : amt / usdBrl;
+    const fromUsd = (amt: number, cur: string) => cur === "USD" ? amt : amt * usdBrl;
+
+    const srcAmount = Math.abs(data.amount);
+    const srcUsd = toUsd(srcAmount, fromCur);
+    const dstAmount = data.amount_to != null
+      ? Math.abs(data.amount_to)
+      : (toCur === fromCur ? srcAmount : Number(fromUsd(srcUsd, toCur).toFixed(2)));
+    const dstUsd = data.amount_to != null ? toUsd(Math.abs(data.amount_to), toCur) : srcUsd;
+
     const groupId = crypto.randomUUID();
-    const base = {
+    const baseCommon = {
       user_id: context.userId,
       date: data.date,
       notes: data.notes ?? null,
-      currency: data.currency,
-      exchange_rate,
       is_transfer: true,
       is_pending: false,
       split_group_id: groupId,
     };
+    const fromRate = fromCur === "USD" ? 1 : 1 / usdBrl;
+    const toRate = toCur === "USD" ? 1 : 1 / usdBrl;
+    const conv = fromCur !== toCur ? ` (1 USD ≈ ${usdBrl.toFixed(4)} BRL)` : "";
     const { error } = await context.supabase.from("transactions").insert([
-      { ...base, account_id: data.from_account_id, merchant: "Transferência (saída)", amount: -Math.abs(data.amount), amount_usd: -Math.abs(amount_usd) },
-      { ...base, account_id: data.to_account_id, merchant: "Transferência (entrada)", amount: Math.abs(data.amount), amount_usd: Math.abs(amount_usd) },
+      {
+        ...baseCommon, account_id: data.from_account_id,
+        merchant: "Transferência (saída)" + conv,
+        amount: -srcAmount, currency: fromCur, exchange_rate: fromRate,
+        amount_usd: -Number(srcUsd.toFixed(2)),
+      },
+      {
+        ...baseCommon, account_id: data.to_account_id,
+        merchant: "Transferência (entrada)" + conv,
+        amount: dstAmount, currency: toCur, exchange_rate: toRate,
+        amount_usd: Number(dstUsd.toFixed(2)),
+      },
     ]);
     if (error) throw new Error(error.message);
-    return { ok: true };
+    return { ok: true, usdBrl, dstAmount };
   });
 
 const CreateTxInput = z.object({
