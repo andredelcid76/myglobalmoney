@@ -12,6 +12,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { getBudgetMonthlyPro, upsertCategoryGroup, toggleRollover } from "@/lib/budgets-pro.functions";
 import { addMonths, monthLabel, startOfMonth } from "@/lib/format";

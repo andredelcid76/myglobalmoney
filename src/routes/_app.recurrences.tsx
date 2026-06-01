@@ -369,8 +369,9 @@ function RecurrencesPage() {
               </select>
             )}
             {bulkField === "amount" && (
-              <Input type="number" step="0.01" value={bulkValue} onChange={(e) => setBulkValue(e.target.value)}
-                placeholder="USD" className="w-28 h-8" />
+              <MoneyInput size="sm" currency="USD" className="w-32"
+                value={bulkValue}
+                onValueChange={(n) => setBulkValue(n == null ? "" : String(n))} />
             )}
             <Button size="sm" disabled={!bulkField || !bulkValue || mBulkUpd.isPending} onClick={applyBulk}>
               Aplicar
@@ -435,8 +436,9 @@ function RecurrencesPage() {
             <Input placeholder="Nome (ex: Netflix)" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
             <Input placeholder="Padrão de merchant (opcional)" value={form.merchant_pattern} onChange={(e) => setForm({ ...form, merchant_pattern: e.target.value })} />
             <div className="grid grid-cols-2 gap-2">
-              <Input type="number" step="0.01" placeholder="Valor (USD)" value={form.amount_usd}
-                     onChange={(e) => setForm({ ...form, amount_usd: Number(e.target.value) })} />
+              <MoneyInput size="lg" showStepper step={10} currency="USD"
+                value={form.amount_usd}
+                onValueChange={(n) => setForm({ ...form, amount_usd: n ?? 0 })} />
               <select value={form.cadence} onChange={(e) => setForm({ ...form, cadence: e.target.value as any })}
                       className="rounded-md border border-border bg-input px-3 py-2 text-sm">
                 {Object.entries(cadenceLabel).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
