@@ -50,6 +50,42 @@ export const deleteRecurrence = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+const BulkUpdateInput = z.object({
+  ids: z.array(z.string().uuid()).min(1).max(500),
+  patch: z.object({
+    account_id: z.string().uuid().nullable().optional(),
+    category_id: z.string().uuid().nullable().optional(),
+    cadence: z.enum(["weekly", "biweekly", "monthly", "quarterly", "yearly"]).optional(),
+    amount_usd: z.number().optional(),
+    is_active: z.boolean().optional(),
+  }),
+});
+
+export const bulkUpdateRecurrences = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => BulkUpdateInput.parse(d))
+  .handler(async ({ data, context }) => {
+    const patch: Record<string, any> = {};
+    for (const [k, v] of Object.entries(data.patch)) if (v !== undefined) patch[k] = v;
+    if (Object.keys(patch).length === 0) return { updated: 0 };
+    const { error } = await context.supabase
+      .from("recurrences")
+      .update(patch)
+      .in("id", data.ids)
+      .eq("user_id", context.userId);
+    if (error) throw new Error(error.message);
+    return { updated: data.ids.length };
+  });
+
+export const bulkDeleteRecurrences = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ ids: z.array(z.string().uuid()).min(1).max(500) }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase.from("recurrences").delete().in("id", data.ids).eq("user_id", context.userId);
+    if (error) throw new Error(error.message);
+    return { deleted: data.ids.length };
+  });
+
 function median(arr: number[]) {
   if (!arr.length) return 0;
   const s = [...arr].sort((a, b) => a - b);
