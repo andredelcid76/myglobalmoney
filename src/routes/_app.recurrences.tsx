@@ -393,47 +393,6 @@ function RecurrencesPage() {
         )}
       </div>
 
-      {(() => null)()}
-      {/* end list */}
-
-      {form && (
-                const isSel = selectedIds.has(r.id);
-                return (
-                <tr key={r.id} className={`border-t border-border hover:bg-secondary/30 cursor-pointer ${!r.is_active ? "opacity-50" : ""} ${isSel ? "bg-primary/5" : ""}`}
-                    onClick={() => setForm({
-                      id: r.id, name: r.name, merchant_pattern: r.merchant_pattern ?? "",
-                      account_id: r.account_id, category_id: r.category_id, amount_usd: Number(r.amount_usd),
-                      cadence: r.cadence, day_of_month: r.day_of_month, next_date: r.next_date,
-                      is_income: r.is_income, is_active: r.is_active, notes: r.notes ?? "",
-                    })}>
-                  <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
-                    <input type="checkbox" checked={isSel} onChange={() => toggleOne(r.id)} aria-label="Selecionar" />
-                  </td>
-                  <td className="px-4 py-2">
-                    <div className="font-medium">{r.name}</div>
-                    {r.source === "auto" && <div className="text-[10px] text-muted-foreground uppercase tracking-widest">auto</div>}
-                  </td>
-                  <td className="px-4 py-2 text-muted-foreground">{categoryName(r.category_id)}</td>
-                  <td className="px-4 py-2 text-muted-foreground">{accountName(r.account_id)}</td>
-                  <td className="px-4 py-2">{cadenceLabel[r.cadence]}</td>
-                  <td className="px-4 py-2 text-muted-foreground">{r.next_date}</td>
-                  <td className={`px-4 py-2 text-right tabular-nums ${r.is_income ? "text-emerald-400" : ""}`}>
-                    {formatCurrency(Number(r.amount_usd))}
-                  </td>
-                  <td className="px-2 py-2">
-                    <button onClick={(e) => { e.stopPropagation(); if (confirm(`Excluir "${r.name}"?`)) remove.mutate(r.id); }}
-                            className="text-muted-foreground hover:text-destructive p-1">
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </td>
-                </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        )}
-      </div>
-
       {form && (
         <div className="fixed inset-0 bg-background/80 backdrop-blur grid place-items-center z-50 p-4" onClick={() => setForm(null)}>
           <div className="bg-card border border-border rounded-xl p-6 max-w-lg w-full space-y-3" onClick={(e) => e.stopPropagation()}>
