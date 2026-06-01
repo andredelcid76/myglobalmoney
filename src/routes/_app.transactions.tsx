@@ -366,14 +366,42 @@ function TagsDialog({ tx, onClose }: { tx: any; onClose: () => void }) {
 
 type Granularity = "daily" | "weekly" | "monthly";
 
-function monthRange(year: number, month0: number) {
-  const fmt = (d: Date) => d.toISOString().slice(0, 10);
-  const s = new Date(Date.UTC(year, month0, 1));
-  const e = new Date(Date.UTC(year, month0 + 1, 0));
-  return { from: fmt(s), to: fmt(e) };
+const MONTH_NAMES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+const DAY_NAMES = ["dom", "seg", "ter", "qua", "qui", "sex", "sáb"];
+
+const fmtISO = (d: Date) => d.toISOString().slice(0, 10);
+
+function periodRange(anchor: Date, gran: Granularity): { from: string; to: string; label: string } {
+  const a = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth(), anchor.getUTCDate()));
+  if (gran === "daily") {
+    return {
+      from: fmtISO(a),
+      to: fmtISO(a),
+      label: `${DAY_NAMES[a.getUTCDay()]}, ${String(a.getUTCDate()).padStart(2, "0")} ${MONTH_NAMES[a.getUTCMonth()]} ${a.getUTCFullYear()}`,
+    };
+  }
+  if (gran === "weekly") {
+    const diff = (a.getUTCDay() + 6) % 7;
+    const s = new Date(a); s.setUTCDate(s.getUTCDate() - diff);
+    const e = new Date(s); e.setUTCDate(e.getUTCDate() + 6);
+    return {
+      from: fmtISO(s),
+      to: fmtISO(e),
+      label: `${String(s.getUTCDate()).padStart(2, "0")} ${MONTH_NAMES[s.getUTCMonth()]} – ${String(e.getUTCDate()).padStart(2, "0")} ${MONTH_NAMES[e.getUTCMonth()]} ${e.getUTCFullYear()}`,
+    };
+  }
+  const s = new Date(Date.UTC(a.getUTCFullYear(), a.getUTCMonth(), 1));
+  const e = new Date(Date.UTC(a.getUTCFullYear(), a.getUTCMonth() + 1, 0));
+  return { from: fmtISO(s), to: fmtISO(e), label: `${MONTH_NAMES[a.getUTCMonth()]} ${a.getUTCFullYear()}` };
 }
 
-const MONTH_NAMES = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+function stepAnchor(anchor: Date, gran: Granularity, delta: number): Date {
+  const d = new Date(anchor);
+  if (gran === "daily") d.setUTCDate(d.getUTCDate() + delta);
+  else if (gran === "weekly") d.setUTCDate(d.getUTCDate() + 7 * delta);
+  else d.setUTCMonth(d.getUTCMonth() + delta);
+  return d;
+}
 
 function bucketLabelFor(dateStr: string, gran: Granularity): { key: string; label: string } {
   const d = new Date(dateStr + "T00:00:00Z");
@@ -394,13 +422,17 @@ function bucketLabelFor(dateStr: string, gran: Granularity): { key: string; labe
 }
 
 function TxLedgerView() {
-  const today = new Date();
-  const [year, setYear] = useState<number>(today.getUTCFullYear());
-  const [month, setMonth] = useState<number>(today.getUTCMonth()); // 0-11
-  const [granularity, setGranularity] = useState<Granularity>("daily");
+  const [anchor, setAnchor] = useState<Date>(() => {
+    const t = new Date();
+    return new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate()));
+  });
+  const [granularity, setGranularity] = useState<Granularity>("monthly");
   const [accountId, setAccountId] = useState<string>("");
 
-  const { from, to } = useMemo(() => monthRange(year, month), [year, month]);
+  const { from, to, label: periodLabel } = useMemo(
+    () => periodRange(anchor, granularity),
+    [anchor, granularity],
+  );
 
   const fetchLedger = useServerFn(getLedgerView);
   const { data, isLoading } = useQuery({
@@ -408,26 +440,30 @@ function TxLedgerView() {
     queryFn: () => fetchLedger({ data: { from, to, granularity, accountId: accountId || null } }),
   });
 
-  const stepMonth = (delta: number) => {
-    const d = new Date(Date.UTC(year, month + delta, 1));
-    setYear(d.getUTCFullYear()); setMonth(d.getUTCMonth());
+  const step = (delta: number) => setAnchor((a) => stepAnchor(a, granularity, delta));
+  const goToday = () => {
+    const t = new Date();
+    setAnchor(new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate())));
   };
-  const monthLabel = `${MONTH_NAMES[month]} ${year}`;
+  const navTitle =
+    granularity === "daily" ? "Dia anterior / próximo"
+    : granularity === "weekly" ? "Semana anterior / próxima"
+    : "Mês anterior / próximo";
 
-  // Group flat entries by bucket for visual section headers
+  // Group flat entries by DAY for visual section headers (always per-day inside the period)
   const grouped = useMemo(() => {
     if (!data) return [] as Array<{ key: string; label: string; entries: any[]; subtotal: number }>;
     const map = new Map<string, { key: string; label: string; entries: any[]; subtotal: number }>();
     const order: string[] = [];
     for (const e of data.entries) {
-      const b = bucketLabelFor(e.date, granularity);
+      const b = bucketLabelFor(e.date, "daily");
       let g = map.get(b.key);
       if (!g) { g = { key: b.key, label: b.label, entries: [], subtotal: 0 }; map.set(b.key, g); order.push(b.key); }
       g.entries.push(e);
       g.subtotal += Number(e.amount);
     }
     return order.map((k) => map.get(k)!);
-  }, [data, granularity]);
+  }, [data]);
 
   return (
     <div className="grid lg:grid-cols-[320px_1fr] gap-4">
@@ -442,13 +478,18 @@ function TxLedgerView() {
               {data?.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
             </select>
           </div>
-          <div className="flex items-center justify-between gap-2">
-            <button onClick={() => stepMonth(-1)} className="p-2 rounded-md hover:bg-secondary/40" title="Mês anterior">
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            <div className="text-sm font-medium capitalize">{monthLabel}</div>
-            <button onClick={() => stepMonth(1)} className="p-2 rounded-md hover:bg-secondary/40" title="Próximo mês">
-              <ChevronRightIcon className="h-4 w-4" />
+          <div>
+            <div className="flex items-center justify-between gap-2">
+              <button onClick={() => step(-1)} className="p-2 rounded-md hover:bg-secondary/40" title={navTitle}>
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <div className="text-sm font-medium capitalize text-center flex-1">{periodLabel}</div>
+              <button onClick={() => step(1)} className="p-2 rounded-md hover:bg-secondary/40" title={navTitle}>
+                <ChevronRightIcon className="h-4 w-4" />
+              </button>
+            </div>
+            <button onClick={goToday} className="mt-1 w-full text-xs text-muted-foreground hover:text-foreground py-1 rounded hover:bg-secondary/40">
+              Hoje
             </button>
           </div>
           <div>
@@ -517,29 +558,7 @@ function TxLedgerView() {
 
         {grouped.map((g) => (
           <div key={g.key}>
-            {granularity !== "daily" ? (
-              // Aggregated single row per bucket
-              <div className="grid grid-cols-[80px_1fr_140px_160px] gap-3 px-4 py-2.5 border-b border-border hover:bg-secondary/20 text-sm">
-                <div className="text-muted-foreground whitespace-nowrap">{g.label}</div>
-                <div className="min-w-0">
-                  <div className="font-medium">
-                    {granularity === "weekly" ? "Semana" : "Mês"} · {g.entries.length} {g.entries.length === 1 ? "lançamento" : "lançamentos"}
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    Entradas {formatCurrency(g.entries.filter((e: any) => Number(e.amount) > 0).reduce((s: number, e: any) => s + Number(e.amount), 0), data!.currency)}
-                    {" · "}
-                    Saídas {formatCurrency(Math.abs(g.entries.filter((e: any) => Number(e.amount) < 0).reduce((s: number, e: any) => s + Number(e.amount), 0)), data!.currency)}
-                  </div>
-                </div>
-                <div className={`text-right tabular-nums self-center font-medium ${g.subtotal >= 0 ? "text-success" : "text-destructive"}`}>
-                  {formatCurrency(g.subtotal, data!.currency)}
-                </div>
-                <div className={`text-right tabular-nums self-center font-medium ${Number(g.entries[g.entries.length - 1]?.balance ?? 0) < 0 ? "text-destructive" : ""}`}>
-                  {formatCurrency(Number(g.entries[g.entries.length - 1]?.balance ?? 0), data!.currency)}
-                </div>
-              </div>
-            ) : (
-              g.entries.map((t) => {
+            {g.entries.map((t) => {
               const acc = data?.accounts.find((a) => a.id === t.account_id);
               const status = (t.status ?? "confirmed") as "confirmed" | "scheduled" | "pending" | "projected";
               const dotColor = t.is_transfer
@@ -576,8 +595,7 @@ function TxLedgerView() {
                   </div>
                 </div>
               );
-              })
-            )}
+            })}
           </div>
         ))}
 
