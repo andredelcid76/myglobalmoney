@@ -156,12 +156,18 @@ function BudgetsYearlyView() {
       r.types[m] = (b.budget_type as BudgetType) ?? "flex";
       r.rollovers[m] = !!b.rollover_enabled;
     }
-    // Aggregate per-group total budget (parent's own + children) for the grid totals
+    // Aggregate per-group total budget. If the parent has children, its budget is the
+    // sum of children (parent's own row is ignored). Without children, use the parent.
     for (const g of groups) {
+      const hasChildren = g.children.length > 0;
       for (let m = 0; m < 12; m++) {
-        let sum = g.parent.budgets[m] ?? 0;
-        for (const ch of g.children) sum += ch.budgets[m] ?? 0;
-        g.parentTotalBudget[m] = sum;
+        if (hasChildren) {
+          let sum = 0;
+          for (const ch of g.children) sum += ch.budgets[m] ?? 0;
+          g.parentTotalBudget[m] = sum;
+        } else {
+          g.parentTotalBudget[m] = g.parent.budgets[m] ?? 0;
+        }
       }
     }
 
