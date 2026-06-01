@@ -116,6 +116,7 @@ export const getLedgerView = createServerFn({ method: "POST" })
     type Entry = {
       id: string; date: string; merchant: string;
       amount: number; currency: string;
+      amount_native: number; currency_native: string;
       category_id: string | null; category_name: string | null;
       account_id: string | null;
       is_transfer: boolean; notes: string | null;
@@ -123,6 +124,7 @@ export const getLedgerView = createServerFn({ method: "POST" })
       balance?: number;
     };
     const entriesRaw: Entry[] = [];
+    const accCurMap = new Map<string, string>(accounts.map((a) => [a.id as string, (a.currency as string) ?? "USD"]));
 
     const realTxByMonth = new Map<string, { merchant: string; cat: string | null }[]>();
     for (const t of txInRes.data ?? []) {
@@ -134,6 +136,8 @@ export const getLedgerView = createServerFn({ method: "POST" })
         merchant: t.merchant as string,
         amount: amt,
         currency,
+        amount_native: Number(t.amount),
+        currency_native: (t.currency as string) ?? "USD",
         category_id: (t.category_id as string | null) ?? null,
         category_name: t.category_id ? (catMap.get(t.category_id as string)?.name ?? null) : null,
         account_id: (t.account_id as string | null) ?? null,
@@ -204,6 +208,8 @@ export const getLedgerView = createServerFn({ method: "POST" })
               merchant: r.name as string,
               amount: amt,
               currency,
+              amount_native: amt,
+              currency_native: accId ? (accCurMap.get(accId) ?? "USD") : "USD",
               category_id: (r.category_id as string | null) ?? null,
               category_name: r.category_id ? (catMap.get(r.category_id as string)?.name ?? null) : null,
               account_id: accId,
@@ -269,6 +275,8 @@ export const getLedgerView = createServerFn({ method: "POST" })
           merchant: `${cat.name} (orçado)`,
           amount: -remaining,
           currency,
+          amount_native: -remaining,
+          currency_native: "USD",
           category_id: b.category_id as string,
           category_name: cat.name as string,
           account_id: null,
@@ -348,6 +356,7 @@ export const getLedgerView = createServerFn({ method: "POST" })
               entriesRaw.push({
                 id: `cc_${a.id}_${ds}`, date: ds, merchant: `Fatura ${a.name}`,
                 amount: -totalOwed, currency, category_id: null,
+                amount_native: -totalOwed, currency_native: (a.currency as string) ?? "USD",
                 category_name: "Pagamento de cartão", account_id: null,
                 is_transfer: false, notes: null, status: "projected", source: "cc_invoice",
               });
@@ -371,6 +380,7 @@ export const getLedgerView = createServerFn({ method: "POST" })
                 id: `cc_${a.id}_closed_${ds}`, date: ds,
                 merchant: `Fatura ${a.name} (fechada)`,
                 amount: -closedUnpaid, currency, category_id: null,
+                amount_native: -closedUnpaid, currency_native: (a.currency as string) ?? "USD",
                 category_name: "Pagamento de cartão", account_id: null,
                 is_transfer: false, notes: null, status: "projected", source: "cc_invoice",
               });
@@ -384,6 +394,7 @@ export const getLedgerView = createServerFn({ method: "POST" })
                 id: `cc_${a.id}_open_${ds}`, date: ds,
                 merchant: `Fatura ${a.name} (em aberto)`,
                 amount: -openSpend, currency, category_id: null,
+                amount_native: -openSpend, currency_native: (a.currency as string) ?? "USD",
                 category_name: "Pagamento de cartão", account_id: null,
                 is_transfer: false, notes: null, status: "projected", source: "cc_invoice",
               });
