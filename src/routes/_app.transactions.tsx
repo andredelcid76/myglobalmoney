@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { listTransactions, updateTxCategory, bulkUpdateTxCategory, createTransaction, deleteTransaction } from "@/lib/finance.functions";
+import { listTransactions, updateTxCategory, bulkUpdateTxCategory, bulkUpdateTxAccount, createTransaction, createTransfer, deleteTransaction } from "@/lib/finance.functions";
 import { splitTransaction, unsplitTransaction, updateTxTags, listAllTags } from "@/lib/splits.functions";
 import { getLedgerView } from "@/lib/ledger.functions";
 import { formatCurrency, formatDate } from "@/lib/format";
@@ -434,12 +434,24 @@ function TxLedgerView() {
   const [ledgerBulkCat, setLedgerBulkCat] = useState<string>("");
   const qc = useQueryClient();
   const bulkUpdate = useServerFn(bulkUpdateTxCategory);
+  const bulkAcct = useServerFn(bulkUpdateTxAccount);
   const delTx = useServerFn(deleteTransaction);
+  const [ledgerBulkAcct, setLedgerBulkAcct] = useState<string>("");
   const mLedgerBulk = useMutation({
     mutationFn: (categoryId: string | null) => bulkUpdate({ data: { ids: Array.from(ledgerSelected), categoryId } }),
     onSuccess: (r) => {
       toast.success(`${r.updated} atualizados`);
       setLedgerSelected(new Set()); setLedgerBulkCat("");
+      qc.invalidateQueries({ queryKey: ["ledger"] });
+      qc.invalidateQueries({ queryKey: ["tx"] });
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+  const mLedgerAcct = useMutation({
+    mutationFn: (accountId: string) => bulkAcct({ data: { ids: Array.from(ledgerSelected), accountId } }),
+    onSuccess: (r) => {
+      toast.success(`${r.updated} movidos`);
+      setLedgerSelected(new Set()); setLedgerBulkAcct("");
       qc.invalidateQueries({ queryKey: ["ledger"] });
       qc.invalidateQueries({ queryKey: ["tx"] });
     },
@@ -609,6 +621,19 @@ function TxLedgerView() {
               onClick={() => mLedgerBulk.mutate(ledgerBulkCat === "__none__" ? null : ledgerBulkCat)}>
               Aplicar
             </Button>
+            <span className="text-xs text-muted-foreground mx-1">·</span>
+            <span className="text-xs text-muted-foreground">Conta:</span>
+            <select value={ledgerBulkAcct} onChange={(e) => setLedgerBulkAcct(e.target.value)}
+              className="rounded-md border border-border bg-input px-2 py-1 text-sm">
+              <option value="">— escolha —</option>
+              {data?.accounts?.map((a: any) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+            <Button size="sm" disabled={!ledgerBulkAcct || mLedgerAcct.isPending}
+              onClick={() => mLedgerAcct.mutate(ledgerBulkAcct)}>
+              Mover
+            </Button>
             <Button size="sm" variant="ghost" className="text-destructive ml-auto"
               onClick={() => { if (confirm(`Excluir ${ledgerSelected.size} transação(ões)?`)) mLedgerDel.mutate(); }}>
               Excluir
@@ -725,17 +750,27 @@ function NewTransactionDialog({ accounts, categories, defaultAccountId, onClose 
   const [date, setDate] = useState(today);
   const [merchant, setMerchant] = useState("");
   const [amount, setAmount] = useState("");
-  const [kind, setKind] = useState<"expense" | "income">("expense");
+  const [kind, setKind] = useState<"expense" | "income" | "transfer">("expense");
   const [accountId, setAccountId] = useState(defaultAccountId);
+  const [toAccountId, setToAccountId] = useState<string>("");
   const [categoryId, setCategoryId] = useState("");
   const [currency, setCurrency] = useState<"USD" | "BRL">("USD");
   const [notes, setNotes] = useState("");
   const create = useServerFn(createTransaction);
+  const transfer = useServerFn(createTransfer);
   const qc = useQueryClient();
   const m = useMutation({
     mutationFn: () => {
       const raw = Number(amount);
       if (!raw || Number.isNaN(raw)) throw new Error("Valor inválido");
+      if (kind === "transfer") {
+        if (!toAccountId) throw new Error("Selecione a conta de destino");
+        if (toAccountId === accountId) throw new Error("Contas devem ser diferentes");
+        return transfer({ data: {
+          date, from_account_id: accountId, to_account_id: toAccountId,
+          amount: Math.abs(raw), currency, notes: notes || null,
+        }});
+      }
       const signed = kind === "expense" ? -Math.abs(raw) : Math.abs(raw);
       return create({ data: {
         date, merchant, amount: signed, currency,
@@ -751,6 +786,7 @@ function NewTransactionDialog({ accounts, categories, defaultAccountId, onClose 
     },
     onError: (e: any) => toast.error(e.message),
   });
+  const isTransfer = kind === "transfer";
   return (
     <Dialog open onOpenChange={onClose}>
       <DialogContent className="max-w-lg">
@@ -767,6 +803,10 @@ function NewTransactionDialog({ accounts, categories, defaultAccountId, onClose 
               className={`flex-1 px-3 py-1.5 ${kind === "income" ? "bg-success text-success-foreground" : "bg-card hover:bg-secondary/40"}`}>
               Receita
             </button>
+            <button type="button" onClick={() => setKind("transfer")}
+              className={`flex-1 px-3 py-1.5 ${kind === "transfer" ? "bg-primary text-primary-foreground" : "bg-card hover:bg-secondary/40"}`}>
+              Transferência
+            </button>
           </div>
           <div className="grid grid-cols-2 gap-2">
             <div>
@@ -778,18 +818,43 @@ function NewTransactionDialog({ accounts, categories, defaultAccountId, onClose 
               <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0,00" />
             </div>
           </div>
-          <div>
-            <Label className="text-xs">Descrição</Label>
-            <Input value={merchant} onChange={(e) => setMerchant(e.target.value)} placeholder="Ex: Aluguel, Supermercado…" />
-          </div>
+          {!isTransfer && (
+            <div>
+              <Label className="text-xs">Descrição</Label>
+              <Input value={merchant} onChange={(e) => setMerchant(e.target.value)} placeholder="Ex: Aluguel, Supermercado…" />
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-2">
             <div>
-              <Label className="text-xs">Conta</Label>
+              <Label className="text-xs">{isTransfer ? "De (origem)" : "Conta"}</Label>
               <select value={accountId} onChange={(e) => setAccountId(e.target.value)}
                 className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm">
                 {accounts.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
               </select>
             </div>
+            {isTransfer ? (
+              <div>
+                <Label className="text-xs">Para (destino)</Label>
+                <select value={toAccountId} onChange={(e) => setToAccountId(e.target.value)}
+                  className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm">
+                  <option value="">— escolha —</option>
+                  {accounts.filter((a: any) => a.id !== accountId).map((a: any) => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div>
+                <Label className="text-xs">Moeda</Label>
+                <select value={currency} onChange={(e) => setCurrency(e.target.value as any)}
+                  className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm">
+                  <option value="USD">USD</option>
+                  <option value="BRL">BRL</option>
+                </select>
+              </div>
+            )}
+          </div>
+          {isTransfer && (
             <div>
               <Label className="text-xs">Moeda</Label>
               <select value={currency} onChange={(e) => setCurrency(e.target.value as any)}
@@ -798,28 +863,33 @@ function NewTransactionDialog({ accounts, categories, defaultAccountId, onClose 
                 <option value="BRL">BRL</option>
               </select>
             </div>
-          </div>
-          <div>
-            <Label className="text-xs">Categoria</Label>
-            <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}
-              className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm">
-              <option value="">— sem categoria —</option>
-              {categories.map((c: any) => (
-                <option key={c.id} value={c.id}>{c.parent_id ? "  ↳ " : ""}{c.name}</option>
-              ))}
-            </select>
-          </div>
+          )}
+          {!isTransfer && (
+            <div>
+              <Label className="text-xs">Categoria</Label>
+              <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}
+                className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm">
+                <option value="">— sem categoria —</option>
+                {categories.map((c: any) => (
+                  <option key={c.id} value={c.id}>{c.parent_id ? "  ↳ " : ""}{c.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <div>
             <Label className="text-xs">Notas (opcional)</Label>
             <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Observações" />
           </div>
           <p className="text-xs text-muted-foreground">
-            Você pode usar uma data futura para registrar uma transação agendada, ou uma data passada para registrar algo que esqueceu.
+            {isTransfer
+              ? "Cria dois lançamentos vinculados: saída na origem e entrada no destino, marcados como transferência."
+              : "Você pode usar uma data futura para registrar uma transação agendada, ou uma data passada para registrar algo que esqueceu."}
           </p>
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>Cancelar</Button>
-          <Button onClick={() => m.mutate()} disabled={m.isPending || !merchant || !amount || !accountId}>
+          <Button onClick={() => m.mutate()}
+            disabled={m.isPending || !amount || !accountId || (isTransfer ? !toAccountId : !merchant)}>
             Criar
           </Button>
         </DialogFooter>
