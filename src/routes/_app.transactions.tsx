@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { listTransactions, updateTxCategory, bulkUpdateTxCategory } from "@/lib/finance.functions";
+import { listTransactions, updateTxCategory, bulkUpdateTxCategory, createTransaction, deleteTransaction } from "@/lib/finance.functions";
 import { splitTransaction, unsplitTransaction, updateTxTags, listAllTags } from "@/lib/splits.functions";
 import { getLedgerView } from "@/lib/ledger.functions";
 import { formatCurrency, formatDate } from "@/lib/format";
@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Split, Tag as TagIcon, X, Undo2, Plus, Trash2, ChevronLeft, ChevronRight as ChevronRightIcon, CheckSquare } from "lucide-react";
+import { Label } from "@/components/ui/label";
 import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
@@ -428,6 +429,35 @@ function TxLedgerView() {
   });
   const [granularity, setGranularity] = useState<Granularity>("monthly");
   const [accountId, setAccountId] = useState<string>("");
+  const [newTxOpen, setNewTxOpen] = useState(false);
+  const [ledgerSelected, setLedgerSelected] = useState<Set<string>>(new Set());
+  const [ledgerBulkCat, setLedgerBulkCat] = useState<string>("");
+  const qc = useQueryClient();
+  const bulkUpdate = useServerFn(bulkUpdateTxCategory);
+  const delTx = useServerFn(deleteTransaction);
+  const mLedgerBulk = useMutation({
+    mutationFn: (categoryId: string | null) => bulkUpdate({ data: { ids: Array.from(ledgerSelected), categoryId } }),
+    onSuccess: (r) => {
+      toast.success(`${r.updated} atualizados`);
+      setLedgerSelected(new Set()); setLedgerBulkCat("");
+      qc.invalidateQueries({ queryKey: ["ledger"] });
+      qc.invalidateQueries({ queryKey: ["tx"] });
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+  const mLedgerDel = useMutation({
+    mutationFn: async () => {
+      for (const id of ledgerSelected) await delTx({ data: { id } });
+      return { deleted: ledgerSelected.size };
+    },
+    onSuccess: (r) => {
+      toast.success(`${r.deleted} excluídos`);
+      setLedgerSelected(new Set());
+      qc.invalidateQueries({ queryKey: ["ledger"] });
+      qc.invalidateQueries({ queryKey: ["tx"] });
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
 
   const { from, to, label: periodLabel } = useMemo(
     () => periodRange(anchor, granularity),
@@ -464,6 +494,27 @@ function TxLedgerView() {
     }
     return order.map((k) => map.get(k)!);
   }, [data]);
+
+  // Only "real" entries (have a uuid id, not projection) can be selected/edited
+  const realIds = useMemo(() => {
+    const ids: string[] = [];
+    for (const g of grouped) for (const e of g.entries) {
+      if (!e.source || e.source === "real") ids.push(e.id);
+    }
+    return ids;
+  }, [grouped]);
+  const allLedgerSelected = realIds.length > 0 && realIds.every((id) => ledgerSelected.has(id));
+  const toggleAllLedger = () => {
+    if (allLedgerSelected) setLedgerSelected(new Set());
+    else setLedgerSelected(new Set(realIds));
+  };
+  const toggleOneLedger = (id: string) => {
+    setLedgerSelected((prev) => {
+      const n = new Set(prev);
+      if (n.has(id)) n.delete(id); else n.add(id);
+      return n;
+    });
+  };
 
   return (
     <div className="grid lg:grid-cols-[320px_1fr] gap-4">
@@ -503,6 +554,9 @@ function TxLedgerView() {
               ))}
             </div>
           </div>
+          <Button className="w-full" onClick={() => setNewTxOpen(true)}>
+            <Plus className="h-4 w-4 mr-1" /> Nova transação
+          </Button>
         </div>
 
         {data && (
@@ -537,7 +591,35 @@ function TxLedgerView() {
 
       {/* Main extract */}
       <div className="rounded-xl border border-border bg-card overflow-hidden">
-        <div className="bg-secondary/30 px-4 py-2 text-xs uppercase tracking-widest text-muted-foreground grid grid-cols-[80px_1fr_140px_160px] gap-3">
+        {ledgerSelected.size > 0 && (
+          <div className="px-4 py-2 bg-primary/5 border-b border-primary/30 flex flex-wrap items-center gap-2">
+            <CheckSquare className="h-4 w-4 text-primary" />
+            <span className="text-sm font-medium">{ledgerSelected.size} selecionada(s)</span>
+            <span className="text-xs text-muted-foreground mx-1">·</span>
+            <span className="text-xs text-muted-foreground">Categoria:</span>
+            <select value={ledgerBulkCat} onChange={(e) => setLedgerBulkCat(e.target.value)}
+              className="rounded-md border border-border bg-input px-2 py-1 text-sm">
+              <option value="">— escolha —</option>
+              <option value="__none__">Sem categoria</option>
+              {data?.categories?.map((c: any) => (
+                <option key={c.id} value={c.id}>{c.parent_id ? "  ↳ " : ""}{c.name}</option>
+              ))}
+            </select>
+            <Button size="sm" disabled={!ledgerBulkCat || mLedgerBulk.isPending}
+              onClick={() => mLedgerBulk.mutate(ledgerBulkCat === "__none__" ? null : ledgerBulkCat)}>
+              Aplicar
+            </Button>
+            <Button size="sm" variant="ghost" className="text-destructive ml-auto"
+              onClick={() => { if (confirm(`Excluir ${ledgerSelected.size} transação(ões)?`)) mLedgerDel.mutate(); }}>
+              Excluir
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setLedgerSelected(new Set())}>Limpar</Button>
+          </div>
+        )}
+        <div className="bg-secondary/30 px-4 py-2 text-xs uppercase tracking-widest text-muted-foreground grid grid-cols-[32px_80px_1fr_140px_160px] gap-3">
+          <div>
+            <input type="checkbox" checked={allLedgerSelected} onChange={toggleAllLedger} aria-label="Selecionar todos" disabled={realIds.length === 0} />
+          </div>
           <div>Data</div>
           <div>Lançamento</div>
           <div className="text-right">Valor</div>
@@ -546,7 +628,8 @@ function TxLedgerView() {
 
         {/* Opening row */}
         {data && (
-          <div className="grid grid-cols-[80px_1fr_140px_160px] gap-3 px-4 py-2 border-b border-border text-sm bg-secondary/10">
+          <div className="grid grid-cols-[32px_80px_1fr_140px_160px] gap-3 px-4 py-2 border-b border-border text-sm bg-secondary/10">
+            <div />
             <div className="text-muted-foreground">{from.slice(8, 10)}/{from.slice(5, 7)}</div>
             <div className="italic text-muted-foreground">Saldo anterior</div>
             <div />
@@ -571,8 +654,14 @@ function TxLedgerView() {
                       ? "bg-rose-500"
                       : "bg-sky-500";
               const isProjected = t.source && t.source !== "real";
+              const isSel = ledgerSelected.has(t.id);
               return (
-                <div key={t.id} className={`grid grid-cols-[80px_1fr_140px_160px] gap-3 px-4 py-2 border-b border-border/60 hover:bg-secondary/20 text-sm ${isProjected ? "bg-secondary/5" : ""}`}>
+                <div key={t.id} className={`grid grid-cols-[32px_80px_1fr_140px_160px] gap-3 px-4 py-2 border-b border-border/60 hover:bg-secondary/20 text-sm ${isProjected ? "bg-secondary/5" : ""} ${isSel ? "bg-primary/5" : ""}`}>
+                  <div className="self-center">
+                    {!isProjected && (
+                      <input type="checkbox" checked={isSel} onChange={() => toggleOneLedger(t.id)} aria-label="Selecionar" />
+                    )}
+                  </div>
                   <div className="text-muted-foreground whitespace-nowrap">{t.date.slice(8, 10)}/{t.date.slice(5, 7)}</div>
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
@@ -606,7 +695,8 @@ function TxLedgerView() {
 
         {/* Closing row */}
         {data && data.entries.length > 0 && (
-          <div className="grid grid-cols-[80px_1fr_140px_160px] gap-3 px-4 py-2.5 bg-secondary/20 text-sm font-medium">
+          <div className="grid grid-cols-[32px_80px_1fr_140px_160px] gap-3 px-4 py-2.5 bg-secondary/20 text-sm font-medium">
+            <div />
             <div className="text-muted-foreground">{to.slice(8, 10)}/{to.slice(5, 7)}</div>
             <div>Saldo final</div>
             <div />
@@ -616,7 +706,125 @@ function TxLedgerView() {
           </div>
         )}
       </div>
+      {newTxOpen && (
+        <NewTransactionDialog
+          accounts={data?.accounts ?? []}
+          categories={(data?.categories as any) ?? []}
+          defaultAccountId={accountId || (data?.accounts?.[0]?.id ?? "")}
+          onClose={() => setNewTxOpen(false)}
+        />
+      )}
     </div>
+  );
+}
+
+function NewTransactionDialog({ accounts, categories, defaultAccountId, onClose }: {
+  accounts: any[]; categories: any[]; defaultAccountId: string; onClose: () => void;
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [date, setDate] = useState(today);
+  const [merchant, setMerchant] = useState("");
+  const [amount, setAmount] = useState("");
+  const [kind, setKind] = useState<"expense" | "income">("expense");
+  const [accountId, setAccountId] = useState(defaultAccountId);
+  const [categoryId, setCategoryId] = useState("");
+  const [currency, setCurrency] = useState<"USD" | "BRL">("USD");
+  const [notes, setNotes] = useState("");
+  const create = useServerFn(createTransaction);
+  const qc = useQueryClient();
+  const m = useMutation({
+    mutationFn: () => {
+      const raw = Number(amount);
+      if (!raw || Number.isNaN(raw)) throw new Error("Valor inválido");
+      const signed = kind === "expense" ? -Math.abs(raw) : Math.abs(raw);
+      return create({ data: {
+        date, merchant, amount: signed, currency,
+        account_id: accountId, category_id: categoryId || null,
+        notes: notes || null, is_transfer: false, is_pending: false,
+      }});
+    },
+    onSuccess: () => {
+      toast.success("Transação criada");
+      qc.invalidateQueries({ queryKey: ["ledger"] });
+      qc.invalidateQueries({ queryKey: ["tx"] });
+      onClose();
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Nova transação</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div className="inline-flex rounded-md border border-border overflow-hidden text-sm w-full">
+            <button type="button" onClick={() => setKind("expense")}
+              className={`flex-1 px-3 py-1.5 ${kind === "expense" ? "bg-destructive text-destructive-foreground" : "bg-card hover:bg-secondary/40"}`}>
+              Despesa
+            </button>
+            <button type="button" onClick={() => setKind("income")}
+              className={`flex-1 px-3 py-1.5 ${kind === "income" ? "bg-success text-success-foreground" : "bg-card hover:bg-secondary/40"}`}>
+              Receita
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label className="text-xs">Data</Label>
+              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            </div>
+            <div>
+              <Label className="text-xs">Valor</Label>
+              <Input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0,00" />
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs">Descrição</Label>
+            <Input value={merchant} onChange={(e) => setMerchant(e.target.value)} placeholder="Ex: Aluguel, Supermercado…" />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label className="text-xs">Conta</Label>
+              <select value={accountId} onChange={(e) => setAccountId(e.target.value)}
+                className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm">
+                {accounts.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <Label className="text-xs">Moeda</Label>
+              <select value={currency} onChange={(e) => setCurrency(e.target.value as any)}
+                className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm">
+                <option value="USD">USD</option>
+                <option value="BRL">BRL</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs">Categoria</Label>
+            <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}
+              className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm">
+              <option value="">— sem categoria —</option>
+              {categories.map((c: any) => (
+                <option key={c.id} value={c.id}>{c.parent_id ? "  ↳ " : ""}{c.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <Label className="text-xs">Notas (opcional)</Label>
+            <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Observações" />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Você pode usar uma data futura para registrar uma transação agendada, ou uma data passada para registrar algo que esqueceu.
+          </p>
+        </div>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose}>Cancelar</Button>
+          <Button onClick={() => m.mutate()} disabled={m.isPending || !merchant || !amount || !accountId}>
+            Criar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

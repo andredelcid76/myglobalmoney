@@ -387,5 +387,6 @@ export const getLedgerView = createServerFn({ method: "POST" })
       },
       today: todayStr,
       accounts: accounts.map((a) => ({ id: a.id, name: a.name, currency: a.currency, color: a.color })),
+      categories: (catsRes.data ?? []).map((c: any) => ({ id: c.id, name: c.name, color: c.color, parent_id: c.parent_id })),
     };
   });
