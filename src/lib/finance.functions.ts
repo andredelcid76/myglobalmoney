@@ -221,6 +221,57 @@ export const deleteTransaction = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+export const setAccountBalanceToday = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({
+    account_id: z.string().uuid(),
+    target_balance: z.number(),
+    date: z.string().optional(),
+    notes: z.string().max(500).nullable().optional(),
+  }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    const today = data.date ?? new Date().toISOString().slice(0, 10);
+    const { data: acc, error: accErr } = await supabase.from("accounts")
+      .select("id,currency,initial_balance,name").eq("id", data.account_id).eq("user_id", userId).maybeSingle();
+    if (accErr || !acc) throw new Error("Conta não encontrada");
+    const cur = (acc.currency as string) ?? "USD";
+    const { data: tx } = await supabase.from("transactions")
+      .select("amount").eq("user_id", userId).eq("account_id", data.account_id).lte("date", today);
+    const current = Number(acc.initial_balance) + (tx ?? []).reduce((s, t: any) => s + Number(t.amount ?? 0), 0);
+    const delta = Number((data.target_balance - current).toFixed(2));
+    if (Math.abs(delta) < 0.005) return { ok: true, delta: 0, current, target: data.target_balance };
+    let usdBrl = 1;
+    if (cur === "BRL") {
+      const { data: r1 } = await supabase.from("exchange_rates").select("rate")
+        .eq("base", "USD").eq("quote", "BRL").lte("date", today)
+        .order("date", { ascending: false }).limit(1).maybeSingle();
+      if (r1) usdBrl = Number(r1.rate);
+      else {
+        const { data: r2 } = await supabase.from("exchange_rates").select("rate")
+          .eq("base", "USD").eq("quote", "BRL").order("date", { ascending: false }).limit(1).maybeSingle();
+        if (r2) usdBrl = Number(r2.rate);
+      }
+    }
+    const delta_usd = cur === "USD" ? delta : Number((delta / usdBrl).toFixed(2));
+    const exchange_rate = cur === "USD" ? 1 : 1 / usdBrl;
+    const { error } = await supabase.from("transactions").insert({
+      user_id: userId,
+      account_id: data.account_id,
+      date: today,
+      merchant: "Ajuste de saldo",
+      notes: data.notes ?? `Ajuste para refletir saldo real em ${today}`,
+      amount: delta,
+      currency: cur,
+      amount_usd: delta_usd,
+      exchange_rate,
+      is_transfer: false,
+      is_pending: false,
+    });
+    if (error) throw new Error(error.message);
+    return { ok: true, delta, current, target: data.target_balance };
+  });
+
 const TxImport = z.object({
   date: z.string(),
   merchant: z.string(),
@@ -259,7 +310,19 @@ export const listAccounts = createServerFn({ method: "POST" })
   .handler(async ({ context }) => {
     const { data, error } = await context.supabase.from("accounts").select("*").eq("user_id", context.userId).order("created_at");
     if (error) throw new Error(error.message);
-    return { accounts: data ?? [] };
+    const today = new Date().toISOString().slice(0, 10);
+    const { data: tx } = await context.supabase.from("transactions")
+      .select("account_id, amount").eq("user_id", context.userId).lte("date", today);
+    const sumByAcc = new Map<string, number>();
+    for (const t of tx ?? []) {
+      const k = (t as any).account_id as string;
+      sumByAcc.set(k, (sumByAcc.get(k) ?? 0) + Number((t as any).amount ?? 0));
+    }
+    const accounts = (data ?? []).map((a: any) => ({
+      ...a,
+      current_balance: Number(a.initial_balance) + (sumByAcc.get(a.id) ?? 0),
+    }));
+    return { accounts };
   });
 
 export const upsertAccount = createServerFn({ method: "POST" })

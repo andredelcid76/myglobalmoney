@@ -1,12 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { listAccounts, upsertAccount } from "@/lib/finance.functions";
+import { listAccounts, upsertAccount, setAccountBalanceToday } from "@/lib/finance.functions";
 import { formatCurrency } from "@/lib/format";
 import { useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Plus, Archive, ArchiveRestore } from "lucide-react";
+import { Plus, Archive, ArchiveRestore, Wallet } from "lucide-react";
+import { toast } from "sonner";
 
 export const Route = createFileRoute("/_app/accounts")({ component: AccountsPage });
 
@@ -28,9 +29,11 @@ const empty: Form = { name: "", type: "checking", currency: "USD", institution: 
 function AccountsPage() {
   const fetchAccounts = useServerFn(listAccounts);
   const upsert = useServerFn(upsertAccount);
+  const setToday = useServerFn(setAccountBalanceToday);
   const qc = useQueryClient();
   const { data } = useQuery({ queryKey: ["accounts"], queryFn: () => fetchAccounts() });
   const [form, setForm] = useState<Form | null>(null);
+  const [adjust, setAdjust] = useState<{ id: string; name: string; currency: string; current: number; target: string } | null>(null);
 
   // Open edit dialog from #edit-<accountId> (used by Credit Cards page)
   useEffect(() => {
@@ -68,6 +71,19 @@ function AccountsPage() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["accounts"] }),
   });
 
+  const adjustMut = useMutation({
+    mutationFn: (v: { account_id: string; target_balance: number }) => setToday({ data: v }),
+    onSuccess: (res: any) => {
+      qc.invalidateQueries({ queryKey: ["accounts"] });
+      qc.invalidateQueries({ queryKey: ["ledger"] });
+      qc.invalidateQueries({ queryKey: ["tx"] });
+      if (res?.delta === 0) toast.success("Saldo já estava correto");
+      else toast.success(`Ajuste de ${res?.delta > 0 ? "+" : ""}${res?.delta?.toFixed?.(2)} aplicado`);
+      setAdjust(null);
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -83,10 +99,16 @@ function AccountsPage() {
               <div className="font-medium truncate">{a.name}</div>
             </div>
             <div className="text-xs text-muted-foreground">{a.institution} · {a.type}</div>
-            <div className="mt-2 text-lg font-semibold">{formatCurrency(Number(a.initial_balance), a.currency)}</div>
-            <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Saldo inicial · {a.currency}</div>
+            <div className="mt-2 text-lg font-semibold">{formatCurrency(Number(a.current_balance ?? a.initial_balance), a.currency)}</div>
+            <div className="text-[10px] uppercase tracking-widest text-muted-foreground">Saldo hoje · {a.currency}</div>
+            <div className="text-[11px] text-muted-foreground mt-0.5">
+              Saldo inicial: {formatCurrency(Number(a.initial_balance), a.currency)}
+            </div>
             <div className="mt-3 flex gap-2">
               <Button size="sm" variant="outline" onClick={() => setForm({ id: a.id, name: a.name, type: a.type, currency: a.currency, institution: a.institution ?? "", color: a.color, initial_balance: Number(a.initial_balance), closing_day: a.closing_day ?? null, due_day: a.due_day ?? null, credit_limit_usd: a.credit_limit_usd != null ? Number(a.credit_limit_usd) : null })}>Editar</Button>
+              <Button size="sm" variant="outline" onClick={() => setAdjust({ id: a.id, name: a.name, currency: a.currency, current: Number(a.current_balance ?? a.initial_balance), target: String(Number(a.current_balance ?? a.initial_balance).toFixed(2)) })}>
+                <Wallet className="h-4 w-4 mr-1" /> Saldo hoje
+              </Button>
               <Button size="sm" variant="ghost" onClick={() => archive.mutate(a)}>
                 {a.is_archived ? <ArchiveRestore className="h-4 w-4" /> : <Archive className="h-4 w-4" />}
               </Button>
@@ -94,6 +116,40 @@ function AccountsPage() {
           </div>
         ))}
       </div>
+
+      {adjust && (
+        <div className="fixed inset-0 bg-background/80 backdrop-blur grid place-items-center z-50 p-4" onClick={() => setAdjust(null)}>
+          <div className="bg-card border border-border rounded-xl p-6 max-w-md w-full space-y-3" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-lg font-semibold">Ajustar saldo de hoje</h2>
+            <p className="text-sm text-muted-foreground">{adjust.name}</p>
+            <div className="text-sm">
+              Saldo atual calculado: <span className="font-medium">{formatCurrency(adjust.current, adjust.currency)}</span>
+            </div>
+            <div>
+              <label className="text-xs text-muted-foreground">Novo saldo de hoje ({adjust.currency})</label>
+              <Input type="number" step="0.01" value={adjust.target}
+                onChange={(e) => setAdjust({ ...adjust, target: e.target.value })} />
+            </div>
+            {adjust.target !== "" && !Number.isNaN(Number(adjust.target)) && (
+              <div className="text-xs text-muted-foreground">
+                Será criado um lançamento de ajuste de{" "}
+                <span className="font-medium">
+                  {(Number(adjust.target) - adjust.current >= 0 ? "+" : "")}
+                  {formatCurrency(Number(adjust.target) - adjust.current, adjust.currency)}
+                </span>{" "}
+                em {new Date().toISOString().slice(0, 10)}.
+              </div>
+            )}
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="ghost" onClick={() => setAdjust(null)}>Cancelar</Button>
+              <Button onClick={() => adjustMut.mutate({ account_id: adjust.id, target_balance: Number(adjust.target) })}
+                disabled={adjustMut.isPending || adjust.target === "" || Number.isNaN(Number(adjust.target))}>
+                {adjustMut.isPending ? "Aplicando…" : "Aplicar ajuste"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {form && (
         <div className="fixed inset-0 bg-background/80 backdrop-blur grid place-items-center z-50 p-4" onClick={() => setForm(null)}>
