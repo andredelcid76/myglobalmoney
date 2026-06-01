@@ -7,6 +7,7 @@ import { getLedgerView } from "@/lib/ledger.functions";
 import { formatCurrency, formatDate } from "@/lib/format";
 import { useMemo, useState } from "react";
 import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";

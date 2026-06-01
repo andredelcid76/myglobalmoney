@@ -6,6 +6,7 @@ import { formatCurrency } from "@/lib/format";
 import { useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Plus, Archive, ArchiveRestore, Wallet } from "lucide-react";
 import { toast } from "sonner";
 
@@ -127,8 +128,12 @@ function AccountsPage() {
             </div>
             <div>
               <label className="text-xs text-muted-foreground">Novo saldo de hoje ({adjust.currency})</label>
-              <Input type="number" step="0.01" value={adjust.target}
-                onChange={(e) => setAdjust({ ...adjust, target: e.target.value })} />
+              <MoneyInput
+                size="lg" currency={adjust.currency} allowNegative showStepper step={10}
+                value={adjust.target}
+                onValueChange={(n) => setAdjust({ ...adjust, target: n == null ? "" : String(n) })}
+                autoFocus
+              />
             </div>
             {adjust.target !== "" && !Number.isNaN(Number(adjust.target)) && (
               <div className="text-xs text-muted-foreground">
@@ -172,7 +177,12 @@ function AccountsPage() {
             </div>
             <div className="grid grid-cols-2 gap-2">
               <Input type="color" value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} />
-              <Input type="number" step="0.01" placeholder="Saldo inicial" value={form.initial_balance} onChange={(e) => setForm({ ...form, initial_balance: Number(e.target.value) })} />
+              <MoneyInput
+                currency={form.currency} allowNegative
+                value={form.initial_balance}
+                onValueChange={(n) => setForm({ ...form, initial_balance: n ?? 0 })}
+                placeholder="Saldo inicial"
+              />
             </div>
             {form.type === "credit_card" && (
               <div className="space-y-2 rounded-md border border-border p-3 bg-secondary/20">
@@ -188,7 +198,12 @@ function AccountsPage() {
                   </div>
                   <div>
                     <label className="text-[10px] text-muted-foreground">Limite (USD)</label>
-                    <Input type="number" step="0.01" placeholder="opcional" value={form.credit_limit_usd ?? ""} onChange={(e) => setForm({ ...form, credit_limit_usd: e.target.value ? Number(e.target.value) : null })} />
+                    <MoneyInput
+                      currency="USD"
+                      value={form.credit_limit_usd}
+                      onValueChange={(n) => setForm({ ...form, credit_limit_usd: n })}
+                      placeholder="opcional"
+                    />
                   </div>
                 </div>
               </div>
