@@ -472,12 +472,10 @@ function CellEditor({
       <PopoverContent className="w-64 space-y-3" align="start">
         <div className="space-y-1.5">
           <Label className="text-xs">Valor (USD)</Label>
-          <input
-            type="number" step="10" value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            className="w-full bg-input border border-border rounded px-2 py-1.5 text-sm"
-            autoFocus
-          />
+          <MoneyInput size="lg" showStepper step={10} currency="USD"
+            value={draft}
+            onValueChange={(n) => setDraft(n == null ? "" : String(n))}
+            autoFocus />
           {suggestion && suggestion.avg > 0 && (
             <div className="flex flex-wrap gap-1 pt-1">
               <button type="button" onClick={() => setDraft(String(Math.round(suggestion.median * 100) / 100))}
@@ -542,8 +540,10 @@ function ApplyToYearPopover({ onApply, suggestion }: {
       </PopoverTrigger>
       <PopoverContent className="w-60 space-y-3">
         <div className="text-xs font-medium">Aplicar ao ano inteiro</div>
-        <input type="number" step="10" placeholder="Valor mensal (USD)" value={amt} onChange={(e) => setAmt(e.target.value)}
-          className="w-full bg-input border border-border rounded px-2 py-1.5 text-sm" autoFocus />
+        <MoneyInput size="lg" showStepper step={10} currency="USD"
+          value={amt}
+          onValueChange={(n) => setAmt(n == null ? "" : String(n))}
+          placeholder="Valor mensal" autoFocus />
         {suggestion && suggestion.avg > 0 && (
           <div className="flex flex-wrap gap-1">
             <button type="button" onClick={() => setAmt(String(Math.round(suggestion.median * 100) / 100))}
@@ -789,10 +789,10 @@ function MonthlyRow({ row, onBudget, onRollover, onGroup, hasChildren, isOpen, o
       </td>
       <td className="px-3 py-2 text-right">
         <div className="flex flex-col items-end">
-          <input type="number" step="10" value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={() => { const n = Number(draft); if (isFinite(n) && n !== row.budgeted) onBudget(n); }}
-            className="w-24 bg-input border border-border rounded px-2 py-1 text-right tabular-nums text-sm" />
+          <MoneyInput size="sm" currency="USD" className="w-32"
+            value={draft}
+            onValueChange={(n) => setDraft(n == null ? "" : String(n))}
+            onBlur={() => { const n = Number(draft); if (isFinite(n) && n !== row.budgeted) onBudget(n); }} />
           {hasChildren && disp.budgeted !== row.budgeted && (
             <span className="text-[10px] text-muted-foreground mt-0.5">Σ {formatCurrency(disp.budgeted)}</span>
           )}
@@ -959,8 +959,9 @@ function ReallocatePopover({ year, categories, onSubmit }: {
           </div>
           <div className="space-y-1">
             <Label className="text-xs">Valor (USD)</Label>
-            <input type="number" step="10" value={amt} onChange={(e) => setAmt(e.target.value)}
-              className="w-full bg-input border border-border rounded px-2 h-9 text-sm" />
+            <MoneyInput currency="USD"
+              value={amt}
+              onValueChange={(n) => setAmt(n == null ? "" : String(n))} />
           </div>
         </div>
         <Button size="sm" className="w-full" onClick={() => {
