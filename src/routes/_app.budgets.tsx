@@ -626,15 +626,20 @@ function BudgetsMonthlyView() {
     .filter((r) => r.isParent)
     .map((p) => {
       const ch = childrenByParent.get(p.id) ?? [];
+      // When the parent has subcategories, its budget is the sum of the children's
+      // (parent's own budget row is ignored). Without children, fall back to parent values.
+      const seed = ch.length > 0
+        ? { budgeted: 0, carryIn: 0, effective: 0, actual: p.actual }
+        : { budgeted: p.budgeted, carryIn: p.carryIn, effective: p.effective, actual: p.actual };
       const agg = ch.reduce(
         (acc, c) => {
           acc.budgeted += c.budgeted;
           acc.carryIn += c.carryIn;
           acc.effective += c.effective;
-          acc.actual += c.actual;
+          // `p.actual` already aggregates children's spend server-side; don't double-count.
           return acc;
         },
-        { budgeted: p.budgeted, carryIn: p.carryIn, effective: p.effective, actual: p.actual },
+        seed,
       );
       const pct = agg.effective > 0 ? agg.actual / agg.effective : (agg.actual > 0 ? Infinity : 0);
       return { ...p, agg, children: ch, pct: Number.isFinite(pct) ? pct : 0 };
