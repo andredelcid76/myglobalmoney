@@ -269,6 +269,33 @@ function RecurrencesPage() {
       )}
 
       <div className="rounded-xl border border-border bg-card overflow-hidden">
+        <div className="px-3 py-2 border-b border-border bg-secondary/20 flex flex-wrap items-center gap-2">
+          <div className="relative">
+            <Search className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar…" className="pl-8 h-8 w-48" />
+          </div>
+          <select value={filterCat} onChange={(e) => setFilterCat(e.target.value)} className="rounded-md border border-border bg-input px-2 py-1 text-xs h-8">
+            <option value="">Todas as categorias</option>
+            {parentCats.map((c: any) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+          <select value={filterAcc} onChange={(e) => setFilterAcc(e.target.value)} className="rounded-md border border-border bg-input px-2 py-1 text-xs h-8">
+            <option value="">Todas as contas</option>
+            {data?.accounts.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+          <select value={filterType} onChange={(e) => setFilterType(e.target.value as any)} className="rounded-md border border-border bg-input px-2 py-1 text-xs h-8">
+            <option value="all">Receitas e despesas</option>
+            <option value="income">Só receitas</option>
+            <option value="expense">Só despesas</option>
+          </select>
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground ml-auto cursor-pointer">
+            <input type="checkbox" checked={grouped} onChange={(e) => setGrouped(e.target.checked)} />
+            <FolderTree className="h-3.5 w-3.5" /> Agrupar por categoria
+          </label>
+          <span className="text-xs text-muted-foreground">{recs.length} de {allRecs.length}</span>
+        </div>
+
         {selectedIds.size > 0 && (
           <div className="px-3 py-2 bg-primary/5 border-b border-primary/30 flex flex-wrap items-center gap-2">
             <CheckSquare className="h-4 w-4 text-primary" />
