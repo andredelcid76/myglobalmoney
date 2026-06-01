@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { listBudgetsYear, upsertBudget, applyBudgetToYear, deleteBudget, getBudgetSuggestions, reallocateBudget, bulkUpsertBudgets } from "@/lib/finance.functions";
 import { formatCurrency } from "@/lib/format";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight, ChevronDown, ChevronRightIcon, Copy, Trash2, ArrowLeftRight, Sparkles, ChevronsDownUp, ChevronsUpDown } from "lucide-react";
 import {
@@ -760,9 +760,15 @@ function MonthlyRow({ row, onBudget, onRollover, onGroup, hasChildren, isOpen, o
   row: any; onBudget: (v: number) => void; onRollover: (v: boolean) => void; onGroup: (v: string) => void;
   hasChildren?: boolean; isOpen?: boolean; onToggle?: () => void; isChild?: boolean;
 }) {
-  const [draft, setDraft] = useState(String(row.budgeted ?? 0));
-  // For parents with children: show aggregated values; budget input still edits parent-only budget
+  // For parents with children: parent budget is locked to sum of subcategories (read-only).
   const disp = row.agg ?? { budgeted: row.budgeted, carryIn: row.carryIn, effective: row.effective, actual: row.actual };
+  const lockedToChildren = !!hasChildren;
+  const editableValue = lockedToChildren ? disp.budgeted : row.budgeted;
+  const [draft, setDraft] = useState(String(editableValue ?? 0));
+  // Sync local input draft whenever upstream value changes (e.g. after refetch or child edits).
+  useEffect(() => {
+    setDraft(editableValue == null ? "" : String(editableValue));
+  }, [editableValue]);
   const pct = Math.min(row.pct, 1.5);
   const paceIcon = row.pace === "ahead" ? <TrendingDown className="h-3 w-3 text-success" />
     : row.pace === "behind" ? <TrendingUp className="h-3 w-3 text-amber-400" />
@@ -789,12 +795,19 @@ function MonthlyRow({ row, onBudget, onRollover, onGroup, hasChildren, isOpen, o
       </td>
       <td className="px-3 py-2 text-right">
         <div className="flex flex-col items-end">
-          <MoneyInput size="sm" currency="USD" className="w-32"
+          <MoneyInput
+            size="sm" currency="USD" className="w-32"
             value={draft}
+            disabled={lockedToChildren}
+            title={lockedToChildren ? "Calculado pela soma das subcategorias" : undefined}
             onValueChange={(n) => setDraft(n == null ? "" : String(n))}
-            onBlur={() => { const n = Number(draft); if (isFinite(n) && n !== row.budgeted) onBudget(n); }} />
-          {hasChildren && disp.budgeted !== row.budgeted && (
-            <span className="text-[10px] text-muted-foreground mt-0.5">Σ {formatCurrency(disp.budgeted)}</span>
+            onBlur={() => {
+              if (lockedToChildren) return;
+              const n = Number(draft);
+              if (isFinite(n) && n !== row.budgeted) onBudget(n);
+            }} />
+          {lockedToChildren && (
+            <span className="text-[10px] text-muted-foreground mt-0.5">Σ subcategorias</span>
           )}
         </div>
       </td>
