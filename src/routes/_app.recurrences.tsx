@@ -347,10 +347,10 @@ function RecurrencesPage() {
             <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}>Limpar</Button>
           </div>
         )}
-        {(data?.recurrences ?? []).length === 0 ? (
+        {recs.length === 0 ? (
           <div className="p-8 text-center text-sm text-muted-foreground">
             <Repeat className="h-8 w-8 mx-auto mb-2 opacity-50" />
-            Nenhuma recorrência ainda. Clique em "Detectar do histórico" para começar.
+            {allRecs.length === 0 ? 'Nenhuma recorrência ainda. Clique em "Detectar do histórico" para começar.' : "Nenhuma recorrência corresponde aos filtros."}
           </div>
         ) : (
           <table className="w-full text-sm">
@@ -359,17 +359,44 @@ function RecurrencesPage() {
                 <th className="px-3 py-2 w-8">
                   <input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="Selecionar todas" />
                 </th>
-                <th className="text-left px-4 py-2">Nome</th>
+                <th className="text-left px-4 py-2"><SortBtn label="Nome" active={sortBy==="name"} dir={sortDir} onClick={() => toggleSort("name")} /></th>
                 <th className="text-left px-4 py-2">Categoria</th>
                 <th className="text-left px-4 py-2">Conta</th>
-                <th className="text-left px-4 py-2">Cadência</th>
-                <th className="text-left px-4 py-2">Próx.</th>
-                <th className="text-right px-4 py-2">Valor</th>
+                <th className="text-left px-4 py-2"><SortBtn label="Cadência" active={sortBy==="cadence"} dir={sortDir} onClick={() => toggleSort("cadence")} /></th>
+                <th className="text-left px-4 py-2"><SortBtn label="Próx." active={sortBy==="next"} dir={sortDir} onClick={() => toggleSort("next")} /></th>
+                <th className="text-right px-4 py-2"><SortBtn label="Valor" active={sortBy==="amount"} dir={sortDir} onClick={() => toggleSort("amount")} right /></th>
                 <th className="w-8"></th>
               </tr>
             </thead>
             <tbody>
-              {data!.recurrences.map((r: any) => {
+              {grouped && groups ? groups.flatMap((g) => [
+                <tr key={`g-${g.key}`} className="bg-secondary/15 border-t border-border">
+                  <td colSpan={8} className="px-3 py-1.5">
+                    <div className="flex items-center gap-2 text-xs">
+                      <div className="h-2.5 w-2.5 rounded-full" style={{ background: g.color }} />
+                      <span className="font-semibold">{g.name}</span>
+                      <span className="text-muted-foreground">· {g.total} item(s) · {formatCurrency(g.sum)}/mês</span>
+                    </div>
+                  </td>
+                </tr>,
+                ...g.subs.flatMap((s) => [
+                  ...(s.sub ? [
+                    <tr key={`s-${g.key}-${s.sub.id}`} className="bg-secondary/5">
+                      <td colSpan={8} className="px-3 py-1 pl-8 text-[11px] text-muted-foreground uppercase tracking-wider">↳ {s.sub.name}</td>
+                    </tr>
+                  ] : []),
+                  ...s.items.map((r: any) => renderRow(r))
+                ])
+              ]) : recs.map((r: any) => renderRow(r))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {(() => null)()}
+      {/* end list */}
+
+      {form && (
                 const isSel = selectedIds.has(r.id);
                 return (
                 <tr key={r.id} className={`border-t border-border hover:bg-secondary/30 cursor-pointer ${!r.is_active ? "opacity-50" : ""} ${isSel ? "bg-primary/5" : ""}`}
