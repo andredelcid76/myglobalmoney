@@ -702,7 +702,7 @@ function TxLedgerView() {
                     </div>
                   </div>
                   <div className={`text-right tabular-nums self-center ${isProjected ? "opacity-70" : ""} ${Number(t.amount) < 0 ? "text-destructive" : "text-success"}`}>
-                    {formatCurrency(Number(t.amount), data!.currency)}
+                    {formatCurrency(Number(t.amount_native ?? t.amount), (t.currency_native ?? data!.currency) as string)}
                   </div>
                   <div className={`text-right tabular-nums self-center font-medium ${Number(t.balance) < 0 ? "text-destructive" : ""}`}>
                     {formatCurrency(Number(t.balance), data!.currency)}
