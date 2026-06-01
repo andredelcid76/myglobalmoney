@@ -10,6 +10,7 @@ import { formatCurrency } from "@/lib/format";
 import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { MoneyInput } from "@/components/ui/money-input";
 import { Plus, Trash2, Wand2, Repeat, Check, CheckSquare, ArrowUpDown, Search, FolderTree } from "lucide-react";
 import { toast } from "sonner";
 
