@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { listBudgetsYear, upsertBudget, applyBudgetToYear, deleteBudget, getBudgetSuggestions, reallocateBudget, bulkUpsertBudgets } from "@/lib/finance.functions";
 import { formatCurrency } from "@/lib/format";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, ChevronRight, ChevronDown, ChevronRightIcon, Copy, Trash2, ArrowLeftRight, Sparkles, ChevronsDownUp, ChevronsUpDown } from "lucide-react";
 import {
@@ -156,12 +156,18 @@ function BudgetsYearlyView() {
       r.types[m] = (b.budget_type as BudgetType) ?? "flex";
       r.rollovers[m] = !!b.rollover_enabled;
     }
-    // Aggregate per-group total budget (parent's own + children) for the grid totals
+    // Aggregate per-group total budget. If the parent has children, its budget is the
+    // sum of children (parent's own row is ignored). Without children, use the parent.
     for (const g of groups) {
+      const hasChildren = g.children.length > 0;
       for (let m = 0; m < 12; m++) {
-        let sum = g.parent.budgets[m] ?? 0;
-        for (const ch of g.children) sum += ch.budgets[m] ?? 0;
-        g.parentTotalBudget[m] = sum;
+        if (hasChildren) {
+          let sum = 0;
+          for (const ch of g.children) sum += ch.budgets[m] ?? 0;
+          g.parentTotalBudget[m] = sum;
+        } else {
+          g.parentTotalBudget[m] = g.parent.budgets[m] ?? 0;
+        }
       }
     }
 
@@ -345,26 +351,35 @@ function FragmentRows({
           const spent = parent.spent[m];
           const over = aggBudget > 0 && spent > aggBudget;
           const ratio = aggBudget > 0 ? Math.min(spent / aggBudget, 1.5) : 0;
-          // Parent cell edits parent's own budget (separate from children's)
+          const lockedToChildren = children.length > 0;
           return (
             <td key={m} className="px-1.5 py-1 align-top">
-              <CellEditor
-                value={parent.budgets[m]}
-                type={parent.types[m] ?? "flex"}
-                rollover={parent.rollovers[m]}
-                displayValue={aggBudget > 0 ? aggBudget : null}
-                suggestion={parentSugg}
-                onSave={(amt, t, ro) =>
-                  onUpsert({
-                    category_id: parent.id,
-                    month: monthKey(year, m),
-                    amount_usd: amt,
-                    budget_type: t,
-                    rollover_enabled: ro,
-                  })
-                }
-                onClear={() => onDelete({ category_id: parent.id, month: monthKey(year, m) })}
-              />
+              {lockedToChildren ? (
+                <div
+                  className="w-full rounded border border-dashed border-border/70 bg-secondary/20 px-2 py-1 text-right tabular-nums text-muted-foreground"
+                  title="Σ subcategorias — edite as subcategorias para alterar"
+                >
+                  {aggBudget > 0 ? formatCurrency(aggBudget) : "—"}
+                </div>
+              ) : (
+                <CellEditor
+                  value={parent.budgets[m]}
+                  type={parent.types[m] ?? "flex"}
+                  rollover={parent.rollovers[m]}
+                  displayValue={aggBudget > 0 ? aggBudget : null}
+                  suggestion={parentSugg}
+                  onSave={(amt, t, ro) =>
+                    onUpsert({
+                      category_id: parent.id,
+                      month: monthKey(year, m),
+                      amount_usd: amt,
+                      budget_type: t,
+                      rollover_enabled: ro,
+                    })
+                  }
+                  onClear={() => onDelete({ category_id: parent.id, month: monthKey(year, m) })}
+                />
+              )}
               <div className="mt-1 h-1 rounded-full bg-secondary overflow-hidden">
                 <div className={`h-full ${over ? "bg-destructive" : "bg-primary"}`} style={{ width: `${ratio * 100}%` }} />
               </div>
@@ -626,15 +641,20 @@ function BudgetsMonthlyView() {
     .filter((r) => r.isParent)
     .map((p) => {
       const ch = childrenByParent.get(p.id) ?? [];
+      // When the parent has subcategories, its budget is the sum of the children's
+      // (parent's own budget row is ignored). Without children, fall back to parent values.
+      const seed = ch.length > 0
+        ? { budgeted: 0, carryIn: 0, effective: 0, actual: p.actual }
+        : { budgeted: p.budgeted, carryIn: p.carryIn, effective: p.effective, actual: p.actual };
       const agg = ch.reduce(
         (acc, c) => {
           acc.budgeted += c.budgeted;
           acc.carryIn += c.carryIn;
           acc.effective += c.effective;
-          acc.actual += c.actual;
+          // `p.actual` already aggregates children's spend server-side; don't double-count.
           return acc;
         },
-        { budgeted: p.budgeted, carryIn: p.carryIn, effective: p.effective, actual: p.actual },
+        seed,
       );
       const pct = agg.effective > 0 ? agg.actual / agg.effective : (agg.actual > 0 ? Infinity : 0);
       return { ...p, agg, children: ch, pct: Number.isFinite(pct) ? pct : 0 };
@@ -760,9 +780,15 @@ function MonthlyRow({ row, onBudget, onRollover, onGroup, hasChildren, isOpen, o
   row: any; onBudget: (v: number) => void; onRollover: (v: boolean) => void; onGroup: (v: string) => void;
   hasChildren?: boolean; isOpen?: boolean; onToggle?: () => void; isChild?: boolean;
 }) {
-  const [draft, setDraft] = useState(String(row.budgeted ?? 0));
-  // For parents with children: show aggregated values; budget input still edits parent-only budget
+  // For parents with children: parent budget is locked to sum of subcategories (read-only).
   const disp = row.agg ?? { budgeted: row.budgeted, carryIn: row.carryIn, effective: row.effective, actual: row.actual };
+  const lockedToChildren = !!hasChildren;
+  const editableValue = lockedToChildren ? disp.budgeted : row.budgeted;
+  const [draft, setDraft] = useState(String(editableValue ?? 0));
+  // Sync local input draft whenever upstream value changes (e.g. after refetch or child edits).
+  useEffect(() => {
+    setDraft(editableValue == null ? "" : String(editableValue));
+  }, [editableValue]);
   const pct = Math.min(row.pct, 1.5);
   const paceIcon = row.pace === "ahead" ? <TrendingDown className="h-3 w-3 text-success" />
     : row.pace === "behind" ? <TrendingUp className="h-3 w-3 text-amber-400" />
@@ -789,12 +815,19 @@ function MonthlyRow({ row, onBudget, onRollover, onGroup, hasChildren, isOpen, o
       </td>
       <td className="px-3 py-2 text-right">
         <div className="flex flex-col items-end">
-          <MoneyInput size="sm" currency="USD" className="w-32"
+          <MoneyInput
+            size="sm" currency="USD" className="w-32"
             value={draft}
+            disabled={lockedToChildren}
+            title={lockedToChildren ? "Calculado pela soma das subcategorias" : undefined}
             onValueChange={(n) => setDraft(n == null ? "" : String(n))}
-            onBlur={() => { const n = Number(draft); if (isFinite(n) && n !== row.budgeted) onBudget(n); }} />
-          {hasChildren && disp.budgeted !== row.budgeted && (
-            <span className="text-[10px] text-muted-foreground mt-0.5">Σ {formatCurrency(disp.budgeted)}</span>
+            onBlur={() => {
+              if (lockedToChildren) return;
+              const n = Number(draft);
+              if (isFinite(n) && n !== row.budgeted) onBudget(n);
+            }} />
+          {lockedToChildren && (
+            <span className="text-[10px] text-muted-foreground mt-0.5">Σ subcategorias</span>
           )}
         </div>
       </td>
