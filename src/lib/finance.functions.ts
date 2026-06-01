@@ -66,6 +66,64 @@ export const bulkUpdateTxCategory = createServerFn({ method: "POST" })
     return { ok: true, updated: data.ids.length };
   });
 
+export const bulkUpdateTxAccount = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({ ids: z.array(z.string().uuid()).min(1).max(500), accountId: z.string().uuid() }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { error } = await context.supabase
+      .from("transactions")
+      .update({ account_id: data.accountId })
+      .in("id", data.ids)
+      .eq("user_id", context.userId);
+    if (error) throw new Error(error.message);
+    return { ok: true, updated: data.ids.length };
+  });
+
+export const createTransfer = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({
+    date: z.string(),
+    from_account_id: z.string().uuid(),
+    to_account_id: z.string().uuid(),
+    amount: z.number().positive(),
+    currency: z.enum(["USD", "BRL"]).default("USD"),
+    notes: z.string().max(500).nullable().optional(),
+  }).parse(d))
+  .handler(async ({ data, context }) => {
+    if (data.from_account_id === data.to_account_id) throw new Error("Contas devem ser diferentes");
+    let exchange_rate = 1;
+    if (data.currency !== "USD") {
+      const { data: rate } = await context.supabase
+        .from("exchange_rates")
+        .select("rate")
+        .eq("base", data.currency)
+        .eq("quote", "USD")
+        .lte("date", data.date)
+        .order("date", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (rate) exchange_rate = Number(rate.rate);
+    }
+    const amount_usd = Number((data.amount * exchange_rate).toFixed(2));
+    const groupId = (globalThis.crypto ?? (await import("crypto"))).randomUUID();
+    const base = {
+      user_id: context.userId,
+      date: data.date,
+      notes: data.notes ?? null,
+      currency: data.currency,
+      exchange_rate,
+      is_transfer: true,
+      is_pending: false,
+      split_group_id: groupId,
+    };
+    const { error } = await context.supabase.from("transactions").insert([
+      { ...base, account_id: data.from_account_id, merchant: "Transferência (saída)", amount: -Math.abs(data.amount), amount_usd: -Math.abs(amount_usd) },
+      { ...base, account_id: data.to_account_id, merchant: "Transferência (entrada)", amount: Math.abs(data.amount), amount_usd: Math.abs(amount_usd) },
+    ]);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
 const CreateTxInput = z.object({
   date: z.string(),
   merchant: z.string().min(1).max(200),
