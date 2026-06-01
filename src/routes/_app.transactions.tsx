@@ -434,12 +434,24 @@ function TxLedgerView() {
   const [ledgerBulkCat, setLedgerBulkCat] = useState<string>("");
   const qc = useQueryClient();
   const bulkUpdate = useServerFn(bulkUpdateTxCategory);
+  const bulkAcct = useServerFn(bulkUpdateTxAccount);
   const delTx = useServerFn(deleteTransaction);
+  const [ledgerBulkAcct, setLedgerBulkAcct] = useState<string>("");
   const mLedgerBulk = useMutation({
     mutationFn: (categoryId: string | null) => bulkUpdate({ data: { ids: Array.from(ledgerSelected), categoryId } }),
     onSuccess: (r) => {
       toast.success(`${r.updated} atualizados`);
       setLedgerSelected(new Set()); setLedgerBulkCat("");
+      qc.invalidateQueries({ queryKey: ["ledger"] });
+      qc.invalidateQueries({ queryKey: ["tx"] });
+    },
+    onError: (e: any) => toast.error(e.message),
+  });
+  const mLedgerAcct = useMutation({
+    mutationFn: (accountId: string) => bulkAcct({ data: { ids: Array.from(ledgerSelected), accountId } }),
+    onSuccess: (r) => {
+      toast.success(`${r.updated} movidos`);
+      setLedgerSelected(new Set()); setLedgerBulkAcct("");
       qc.invalidateQueries({ queryKey: ["ledger"] });
       qc.invalidateQueries({ queryKey: ["tx"] });
     },
