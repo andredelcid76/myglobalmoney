@@ -281,10 +281,10 @@ export const getLedgerView = createServerFn({ method: "POST" })
 
       // ---- Future credit card invoices (only when viewing "all" or that specific CC)
       if (!data.accountId) {
-        // Compute current balance per credit-card account (USD)
+        // Compute current balance per credit-card account (USD), including transfers
         const balByAcc = new Map<string, number>();
         for (const a of accounts) balByAcc.set(a.id, Number(a.initial_balance ?? 0));
-        // We need all transactions to compute today balance; reuse before + within
+        // For CC balance we need ALL tx (including transfers/payments). Re-fetch only CC tx ids? simpler: use txBeforeRes + txInRes (which already include transfers — the .eq("is_transfer",false) is NOT applied here).
         for (const t of txBeforeRes.data ?? []) {
           balByAcc.set((t as any).account_id, (balByAcc.get((t as any).account_id) ?? 0) + Number((t as any).amount_usd ?? 0));
         }
@@ -293,30 +293,101 @@ export const getLedgerView = createServerFn({ method: "POST" })
             balByAcc.set(t.account_id as string, (balByAcc.get(t.account_id as string) ?? 0) + Number(t.amount_usd ?? 0));
           }
         }
+        // Helper: compute statement cycle for a CC at a given reference date.
+        function buildCycle(refY: number, refM: number, refD: number, closingDay: number, dueDay: number) {
+          const lastDay = (yy: number, mm: number) => new Date(Date.UTC(yy, mm + 1, 0)).getUTCDate();
+          const clamp = (yy: number, mm: number, d: number) => Math.min(d, lastDay(yy, mm));
+          let closeY = refY, closeM = refM;
+          if (refD > clamp(refY, refM, closingDay)) {
+            closeM++; if (closeM > 11) { closeM = 0; closeY++; }
+          }
+          const close = new Date(Date.UTC(closeY, closeM, clamp(closeY, closeM, closingDay)));
+          const prevCloseM0 = closeM - 1;
+          const prevCloseY = prevCloseM0 < 0 ? closeY - 1 : closeY;
+          const prevCloseM = (prevCloseM0 + 12) % 12;
+          const prevClose = new Date(Date.UTC(prevCloseY, prevCloseM, clamp(prevCloseY, prevCloseM, closingDay)));
+          const start = new Date(prevClose); start.setUTCDate(prevClose.getUTCDate() + 1);
+          let dueY = closeY, dueM = closeM;
+          if (clamp(dueY, dueM, dueDay) < close.getUTCDate()) {
+            dueM++; if (dueM > 11) { dueM = 0; dueY++; }
+          }
+          const due = new Date(Date.UTC(dueY, dueM, clamp(dueY, dueM, dueDay)));
+          return { start, close, due };
+        }
+        const ty = today.getUTCFullYear(), tm = today.getUTCMonth(), td = today.getUTCDate();
+        // Sum of non-transfer tx within [start,close] for an account (in USD), using both before+within slices
+        function sumWindow(accId: string, startStr: string, closeStr: string) {
+          let s = 0;
+          for (const t of txBeforeRes.data ?? []) {
+            const tt = t as any;
+            if (tt.account_id !== accId || tt.is_transfer) continue;
+            const d = tt.date as string;
+            if (d >= startStr && d <= closeStr) s += Math.abs(Number(tt.amount_usd ?? 0));
+          }
+          for (const t of txInRes.data ?? []) {
+            const tt = t as any;
+            if (tt.account_id !== accId || tt.is_transfer) continue;
+            const d = tt.date as string;
+            if (d >= startStr && d <= closeStr) s += Math.abs(Number(tt.amount_usd ?? 0));
+          }
+          return s;
+        }
         for (const a of accounts as any[]) {
           if (a.type !== "credit_card") continue;
-          const owed = -(balByAcc.get(a.id) ?? 0);
-          if (owed <= 0) continue;
-          const dueDay = Math.min(a.due_day ?? 10, 28);
-          // Next due >= today
-          let due = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), dueDay));
-          if (fmt(due) < todayStr) due = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, dueDay));
-          const ds = fmt(due);
-          if (ds >= data.from && ds <= data.to) {
-            entriesRaw.push({
-              id: `cc_${a.id}_${ds}`,
-              date: ds,
-              merchant: `Fatura ${a.name}`,
-              amount: -owed,
-              currency,
-              category_id: null,
-              category_name: "Pagamento de cartão",
-              account_id: null,
-              is_transfer: false,
-              notes: null,
-              status: "projected",
-              source: "cc_invoice",
-            });
+          const totalOwed = Math.max(0, -(balByAcc.get(a.id) ?? 0));
+          if (totalOwed <= 0) continue;
+          const closingDay = a.closing_day ?? null;
+          const dueDay = a.due_day ?? null;
+          if (!closingDay || !dueDay) {
+            // fallback: single projection on next due
+            const day = Math.min(dueDay ?? 10, 28);
+            let due = new Date(Date.UTC(ty, tm, day));
+            if (fmt(due) < todayStr) due = new Date(Date.UTC(ty, tm + 1, day));
+            const ds = fmt(due);
+            if (ds >= data.from && ds <= data.to) {
+              entriesRaw.push({
+                id: `cc_${a.id}_${ds}`, date: ds, merchant: `Fatura ${a.name}`,
+                amount: -totalOwed, currency, category_id: null,
+                category_name: "Pagamento de cartão", account_id: null,
+                is_transfer: false, notes: null, status: "projected", source: "cc_invoice",
+              });
+            }
+            continue;
+          }
+          const cur = buildCycle(ty, tm, td, closingDay, dueDay);
+          const prev = {
+            start: new Date(Date.UTC(cur.start.getUTCFullYear(), cur.start.getUTCMonth() - 1, cur.start.getUTCDate())),
+            close: new Date(Date.UTC(cur.close.getUTCFullYear(), cur.close.getUTCMonth() - 1, cur.close.getUTCDate())),
+            due:   new Date(Date.UTC(cur.due.getUTCFullYear(),   cur.due.getUTCMonth()   - 1, cur.due.getUTCDate())),
+          };
+          const openSpend = sumWindow(a.id, fmt(cur.start), fmt(cur.close));
+          const closedUnpaid = Math.max(0, totalOwed - openSpend);
+
+          // 1) Closed fatura — due in previous cycle's due date (if still ahead in window and unpaid)
+          if (closedUnpaid > 0.005) {
+            const ds = fmt(prev.due);
+            if (ds >= todayStr && ds >= data.from && ds <= data.to) {
+              entriesRaw.push({
+                id: `cc_${a.id}_closed_${ds}`, date: ds,
+                merchant: `Fatura ${a.name} (fechada)`,
+                amount: -closedUnpaid, currency, category_id: null,
+                category_name: "Pagamento de cartão", account_id: null,
+                is_transfer: false, notes: null, status: "projected", source: "cc_invoice",
+              });
+            }
+          }
+          // 2) Open cycle fatura — due in current cycle's due date
+          if (openSpend > 0.005) {
+            const ds = fmt(cur.due);
+            if (ds >= todayStr && ds >= data.from && ds <= data.to) {
+              entriesRaw.push({
+                id: `cc_${a.id}_open_${ds}`, date: ds,
+                merchant: `Fatura ${a.name} (em aberto)`,
+                amount: -openSpend, currency, category_id: null,
+                category_name: "Pagamento de cartão", account_id: null,
+                is_transfer: false, notes: null, status: "projected", source: "cc_invoice",
+              });
+            }
           }
         }
       }
