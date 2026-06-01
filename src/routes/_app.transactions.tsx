@@ -621,6 +621,19 @@ function TxLedgerView() {
               onClick={() => mLedgerBulk.mutate(ledgerBulkCat === "__none__" ? null : ledgerBulkCat)}>
               Aplicar
             </Button>
+            <span className="text-xs text-muted-foreground mx-1">·</span>
+            <span className="text-xs text-muted-foreground">Conta:</span>
+            <select value={ledgerBulkAcct} onChange={(e) => setLedgerBulkAcct(e.target.value)}
+              className="rounded-md border border-border bg-input px-2 py-1 text-sm">
+              <option value="">— escolha —</option>
+              {data?.accounts?.map((a: any) => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+            <Button size="sm" disabled={!ledgerBulkAcct || mLedgerAcct.isPending}
+              onClick={() => mLedgerAcct.mutate(ledgerBulkAcct)}>
+              Mover
+            </Button>
             <Button size="sm" variant="ghost" className="text-destructive ml-auto"
               onClick={() => { if (confirm(`Excluir ${ledgerSelected.size} transação(ões)?`)) mLedgerDel.mutate(); }}>
               Excluir
