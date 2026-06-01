@@ -10,7 +10,7 @@ import { formatCurrency } from "@/lib/format";
 import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Trash2, Wand2, Repeat, Check, CheckSquare } from "lucide-react";
+import { Plus, Trash2, Wand2, Repeat, Check, CheckSquare, ArrowUpDown, Search, FolderTree } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_app/recurrences")({ component: RecurrencesPage });
@@ -61,6 +61,13 @@ function RecurrencesPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkField, setBulkField] = useState<"account" | "category" | "cadence" | "amount" | "">("");
   const [bulkValue, setBulkValue] = useState<string>("");
+  const [query, setQuery] = useState("");
+  const [filterCat, setFilterCat] = useState<string>("");
+  const [filterAcc, setFilterAcc] = useState<string>("");
+  const [filterType, setFilterType] = useState<"all" | "income" | "expense">("all");
+  const [grouped, setGrouped] = useState(true);
+  const [sortBy, setSortBy] = useState<"name" | "next" | "amount" | "cadence">("next");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   const save = useMutation({
     mutationFn: (v: Form) => upsert({ data: { ...v, merchant_pattern: v.merchant_pattern || null, notes: v.notes || null } as any }),
@@ -110,7 +117,63 @@ function RecurrencesPage() {
   const accountName = (id: string | null) => data?.accounts.find((a: any) => a.id === id)?.name ?? "—";
   const categoryName = (id: string | null) => data?.categories.find((c: any) => c.id === id)?.name ?? "Sem categoria";
 
-  const recs = data?.recurrences ?? [];
+  const allRecs = data?.recurrences ?? [];
+  const cats = data?.categories ?? [];
+  const catMap = useMemo(() => new Map<string, any>(cats.map((c: any) => [c.id, c])), [cats]);
+  const parentIdOf = (catId: string | null) => {
+    if (!catId) return null;
+    const c = catMap.get(catId);
+    return c?.parent_id ?? c?.id ?? null;
+  };
+
+  const recs = useMemo(() => {
+    const term = query.trim().toLowerCase();
+    let list = allRecs.filter((r: any) => {
+      if (term && !((r.name as string).toLowerCase().includes(term) || (r.merchant_pattern ?? "").toLowerCase().includes(term))) return false;
+      if (filterAcc && r.account_id !== filterAcc) return false;
+      if (filterCat) {
+        const pid = parentIdOf(r.category_id);
+        if (r.category_id !== filterCat && pid !== filterCat) return false;
+      }
+      if (filterType === "income" && !r.is_income) return false;
+      if (filterType === "expense" && r.is_income) return false;
+      return true;
+    });
+    const dir = sortDir === "asc" ? 1 : -1;
+    const cadOrder: Record<string, number> = { weekly: 0, biweekly: 1, monthly: 2, quarterly: 3, yearly: 4 };
+    list = list.slice().sort((a: any, b: any) => {
+      if (sortBy === "name") return a.name.localeCompare(b.name) * dir;
+      if (sortBy === "amount") return (Math.abs(Number(a.amount_usd)) - Math.abs(Number(b.amount_usd))) * dir;
+      if (sortBy === "cadence") return ((cadOrder[a.cadence] ?? 9) - (cadOrder[b.cadence] ?? 9)) * dir;
+      return (a.next_date ?? "").localeCompare(b.next_date ?? "") * dir;
+    });
+    return list;
+  }, [allRecs, query, filterAcc, filterCat, filterType, sortBy, sortDir, catMap]);
+
+  const groups = useMemo(() => {
+    if (!grouped) return null;
+    const byParent = new Map<string, { parent: any; subs: Map<string, { sub: any | null; items: any[] }> }>();
+    for (const r of recs) {
+      const c = r.category_id ? catMap.get(r.category_id) : null;
+      const parent = c?.parent_id ? catMap.get(c.parent_id) : c;
+      const pKey = parent?.id ?? "__none__";
+      const sKey = c?.parent_id ? c.id : "__self__";
+      const g = byParent.get(pKey) ?? { parent: parent ?? null, subs: new Map() };
+      const s = g.subs.get(sKey) ?? { sub: c?.parent_id ? c : null, items: [] };
+      s.items.push(r);
+      g.subs.set(sKey, s);
+      byParent.set(pKey, g);
+    }
+    return Array.from(byParent.entries()).map(([pKey, g]) => ({
+      key: pKey,
+      name: g.parent?.name ?? "Sem categoria",
+      color: g.parent?.color ?? "#64748b",
+      subs: Array.from(g.subs.values()).sort((a, b) => (a.sub?.name ?? "").localeCompare(b.sub?.name ?? "")),
+      total: Array.from(g.subs.values()).reduce((s, x) => s + x.items.length, 0),
+      sum: Array.from(g.subs.values()).reduce((s, x) => s + x.items.reduce((ss: number, r: any) => ss + Math.abs(Number(r.amount_usd)) * (cadenceFactor[r.cadence] ?? 1), 0), 0),
+    })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [recs, grouped, catMap]);
+
   const allSelected = recs.length > 0 && recs.every((r: any) => selectedIds.has(r.id));
   const toggleAll = () => {
     if (allSelected) setSelectedIds(new Set());
@@ -123,6 +186,13 @@ function RecurrencesPage() {
       return n;
     });
   };
+
+  const toggleSort = (k: typeof sortBy) => {
+    if (sortBy === k) setSortDir(sortDir === "asc" ? "desc" : "asc");
+    else { setSortBy(k); setSortDir("asc"); }
+  };
+
+  const parentCats = cats.filter((c: any) => !c.parent_id);
 
   const applyBulk = () => {
     if (!bulkField) return;
