@@ -65,12 +65,11 @@ export const bulkUpdateRecurrences = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d) => BulkUpdateInput.parse(d))
   .handler(async ({ data, context }) => {
-    const patch: Record<string, any> = {};
-    for (const [k, v] of Object.entries(data.patch)) if (v !== undefined) patch[k] = v;
+    const patch = Object.fromEntries(Object.entries(data.patch).filter(([, v]) => v !== undefined));
     if (Object.keys(patch).length === 0) return { updated: 0 };
     const { error } = await context.supabase
       .from("recurrences")
-      .update(patch)
+      .update(patch as any)
       .in("id", data.ids)
       .eq("user_id", context.userId);
     if (error) throw new Error(error.message);
