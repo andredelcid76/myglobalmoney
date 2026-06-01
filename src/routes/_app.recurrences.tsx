@@ -10,7 +10,7 @@ import { formatCurrency } from "@/lib/format";
 import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Plus, Trash2, Wand2, Repeat, Check, CheckSquare } from "lucide-react";
+import { Plus, Trash2, Wand2, Repeat, Check, CheckSquare, ArrowUpDown, Search, FolderTree } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/_app/recurrences")({ component: RecurrencesPage });
@@ -61,6 +61,13 @@ function RecurrencesPage() {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkField, setBulkField] = useState<"account" | "category" | "cadence" | "amount" | "">("");
   const [bulkValue, setBulkValue] = useState<string>("");
+  const [query, setQuery] = useState("");
+  const [filterCat, setFilterCat] = useState<string>("");
+  const [filterAcc, setFilterAcc] = useState<string>("");
+  const [filterType, setFilterType] = useState<"all" | "income" | "expense">("all");
+  const [grouped, setGrouped] = useState(true);
+  const [sortBy, setSortBy] = useState<"name" | "next" | "amount" | "cadence">("next");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   const save = useMutation({
     mutationFn: (v: Form) => upsert({ data: { ...v, merchant_pattern: v.merchant_pattern || null, notes: v.notes || null } as any }),
@@ -110,7 +117,63 @@ function RecurrencesPage() {
   const accountName = (id: string | null) => data?.accounts.find((a: any) => a.id === id)?.name ?? "—";
   const categoryName = (id: string | null) => data?.categories.find((c: any) => c.id === id)?.name ?? "Sem categoria";
 
-  const recs = data?.recurrences ?? [];
+  const allRecs = data?.recurrences ?? [];
+  const cats = data?.categories ?? [];
+  const catMap = useMemo(() => new Map<string, any>(cats.map((c: any) => [c.id, c])), [cats]);
+  const parentIdOf = (catId: string | null) => {
+    if (!catId) return null;
+    const c = catMap.get(catId);
+    return c?.parent_id ?? c?.id ?? null;
+  };
+
+  const recs = useMemo(() => {
+    const term = query.trim().toLowerCase();
+    let list = allRecs.filter((r: any) => {
+      if (term && !((r.name as string).toLowerCase().includes(term) || (r.merchant_pattern ?? "").toLowerCase().includes(term))) return false;
+      if (filterAcc && r.account_id !== filterAcc) return false;
+      if (filterCat) {
+        const pid = parentIdOf(r.category_id);
+        if (r.category_id !== filterCat && pid !== filterCat) return false;
+      }
+      if (filterType === "income" && !r.is_income) return false;
+      if (filterType === "expense" && r.is_income) return false;
+      return true;
+    });
+    const dir = sortDir === "asc" ? 1 : -1;
+    const cadOrder: Record<string, number> = { weekly: 0, biweekly: 1, monthly: 2, quarterly: 3, yearly: 4 };
+    list = list.slice().sort((a: any, b: any) => {
+      if (sortBy === "name") return a.name.localeCompare(b.name) * dir;
+      if (sortBy === "amount") return (Math.abs(Number(a.amount_usd)) - Math.abs(Number(b.amount_usd))) * dir;
+      if (sortBy === "cadence") return ((cadOrder[a.cadence] ?? 9) - (cadOrder[b.cadence] ?? 9)) * dir;
+      return (a.next_date ?? "").localeCompare(b.next_date ?? "") * dir;
+    });
+    return list;
+  }, [allRecs, query, filterAcc, filterCat, filterType, sortBy, sortDir, catMap]);
+
+  const groups = useMemo(() => {
+    if (!grouped) return null;
+    const byParent = new Map<string, { parent: any; subs: Map<string, { sub: any | null; items: any[] }> }>();
+    for (const r of recs) {
+      const c = r.category_id ? catMap.get(r.category_id) : null;
+      const parent = c?.parent_id ? catMap.get(c.parent_id) : c;
+      const pKey = parent?.id ?? "__none__";
+      const sKey = c?.parent_id ? c.id : "__self__";
+      const g = byParent.get(pKey) ?? { parent: parent ?? null, subs: new Map() };
+      const s = g.subs.get(sKey) ?? { sub: c?.parent_id ? c : null, items: [] };
+      s.items.push(r);
+      g.subs.set(sKey, s);
+      byParent.set(pKey, g);
+    }
+    return Array.from(byParent.entries()).map(([pKey, g]) => ({
+      key: pKey,
+      name: g.parent?.name ?? "Sem categoria",
+      color: g.parent?.color ?? "#64748b",
+      subs: Array.from(g.subs.values()).sort((a, b) => (a.sub?.name ?? "").localeCompare(b.sub?.name ?? "")),
+      total: Array.from(g.subs.values()).reduce((s, x) => s + x.items.length, 0),
+      sum: Array.from(g.subs.values()).reduce((s, x) => s + x.items.reduce((ss: number, r: any) => ss + Math.abs(Number(r.amount_usd)) * (cadenceFactor[r.cadence] ?? 1), 0), 0),
+    })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [recs, grouped, catMap]);
+
   const allSelected = recs.length > 0 && recs.every((r: any) => selectedIds.has(r.id));
   const toggleAll = () => {
     if (allSelected) setSelectedIds(new Set());
@@ -123,6 +186,13 @@ function RecurrencesPage() {
       return n;
     });
   };
+
+  const toggleSort = (k: typeof sortBy) => {
+    if (sortBy === k) setSortDir(sortDir === "asc" ? "desc" : "asc");
+    else { setSortBy(k); setSortDir("asc"); }
+  };
+
+  const parentCats = cats.filter((c: any) => !c.parent_id);
 
   const applyBulk = () => {
     if (!bulkField) return;
@@ -137,6 +207,40 @@ function RecurrencesPage() {
     }
     if (Object.keys(patch).length === 0) return;
     mBulkUpd.mutate(patch);
+  };
+
+  const renderRow = (r: any) => {
+    const isSel = selectedIds.has(r.id);
+    return (
+      <tr key={r.id} className={`border-t border-border hover:bg-secondary/30 cursor-pointer ${!r.is_active ? "opacity-50" : ""} ${isSel ? "bg-primary/5" : ""}`}
+          onClick={() => setForm({
+            id: r.id, name: r.name, merchant_pattern: r.merchant_pattern ?? "",
+            account_id: r.account_id, category_id: r.category_id, amount_usd: Number(r.amount_usd),
+            cadence: r.cadence, day_of_month: r.day_of_month, next_date: r.next_date,
+            is_income: r.is_income, is_active: r.is_active, notes: r.notes ?? "",
+          })}>
+        <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
+          <input type="checkbox" checked={isSel} onChange={() => toggleOne(r.id)} aria-label="Selecionar" />
+        </td>
+        <td className="px-4 py-2">
+          <div className="font-medium">{r.name}</div>
+          {r.source === "auto" && <div className="text-[10px] text-muted-foreground uppercase tracking-widest">auto</div>}
+        </td>
+        <td className="px-4 py-2 text-muted-foreground">{categoryName(r.category_id)}</td>
+        <td className="px-4 py-2 text-muted-foreground">{accountName(r.account_id)}</td>
+        <td className="px-4 py-2">{cadenceLabel[r.cadence]}</td>
+        <td className="px-4 py-2 text-muted-foreground">{r.next_date}</td>
+        <td className={`px-4 py-2 text-right tabular-nums ${r.is_income ? "text-emerald-400" : ""}`}>
+          {formatCurrency(Number(r.amount_usd))}
+        </td>
+        <td className="px-2 py-2">
+          <button onClick={(e) => { e.stopPropagation(); if (confirm(`Excluir "${r.name}"?`)) remove.mutate(r.id); }}
+                  className="text-muted-foreground hover:text-destructive p-1">
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </td>
+      </tr>
+    );
   };
 
   return (
@@ -199,6 +303,33 @@ function RecurrencesPage() {
       )}
 
       <div className="rounded-xl border border-border bg-card overflow-hidden">
+        <div className="px-3 py-2 border-b border-border bg-secondary/20 flex flex-wrap items-center gap-2">
+          <div className="relative">
+            <Search className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Buscar…" className="pl-8 h-8 w-48" />
+          </div>
+          <select value={filterCat} onChange={(e) => setFilterCat(e.target.value)} className="rounded-md border border-border bg-input px-2 py-1 text-xs h-8">
+            <option value="">Todas as categorias</option>
+            {parentCats.map((c: any) => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
+          </select>
+          <select value={filterAcc} onChange={(e) => setFilterAcc(e.target.value)} className="rounded-md border border-border bg-input px-2 py-1 text-xs h-8">
+            <option value="">Todas as contas</option>
+            {data?.accounts.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
+          </select>
+          <select value={filterType} onChange={(e) => setFilterType(e.target.value as any)} className="rounded-md border border-border bg-input px-2 py-1 text-xs h-8">
+            <option value="all">Receitas e despesas</option>
+            <option value="income">Só receitas</option>
+            <option value="expense">Só despesas</option>
+          </select>
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground ml-auto cursor-pointer">
+            <input type="checkbox" checked={grouped} onChange={(e) => setGrouped(e.target.checked)} />
+            <FolderTree className="h-3.5 w-3.5" /> Agrupar por categoria
+          </label>
+          <span className="text-xs text-muted-foreground">{recs.length} de {allRecs.length}</span>
+        </div>
+
         {selectedIds.size > 0 && (
           <div className="px-3 py-2 bg-primary/5 border-b border-primary/30 flex flex-wrap items-center gap-2">
             <CheckSquare className="h-4 w-4 text-primary" />
@@ -250,10 +381,10 @@ function RecurrencesPage() {
             <Button size="sm" variant="ghost" onClick={() => setSelectedIds(new Set())}>Limpar</Button>
           </div>
         )}
-        {(data?.recurrences ?? []).length === 0 ? (
+        {recs.length === 0 ? (
           <div className="p-8 text-center text-sm text-muted-foreground">
             <Repeat className="h-8 w-8 mx-auto mb-2 opacity-50" />
-            Nenhuma recorrência ainda. Clique em "Detectar do histórico" para começar.
+            {allRecs.length === 0 ? 'Nenhuma recorrência ainda. Clique em "Detectar do histórico" para começar.' : "Nenhuma recorrência corresponde aos filtros."}
           </div>
         ) : (
           <table className="w-full text-sm">
@@ -262,49 +393,35 @@ function RecurrencesPage() {
                 <th className="px-3 py-2 w-8">
                   <input type="checkbox" checked={allSelected} onChange={toggleAll} aria-label="Selecionar todas" />
                 </th>
-                <th className="text-left px-4 py-2">Nome</th>
+                <th className="text-left px-4 py-2"><SortBtn label="Nome" active={sortBy==="name"} dir={sortDir} onClick={() => toggleSort("name")} /></th>
                 <th className="text-left px-4 py-2">Categoria</th>
                 <th className="text-left px-4 py-2">Conta</th>
-                <th className="text-left px-4 py-2">Cadência</th>
-                <th className="text-left px-4 py-2">Próx.</th>
-                <th className="text-right px-4 py-2">Valor</th>
+                <th className="text-left px-4 py-2"><SortBtn label="Cadência" active={sortBy==="cadence"} dir={sortDir} onClick={() => toggleSort("cadence")} /></th>
+                <th className="text-left px-4 py-2"><SortBtn label="Próx." active={sortBy==="next"} dir={sortDir} onClick={() => toggleSort("next")} /></th>
+                <th className="text-right px-4 py-2"><SortBtn label="Valor" active={sortBy==="amount"} dir={sortDir} onClick={() => toggleSort("amount")} right /></th>
                 <th className="w-8"></th>
               </tr>
             </thead>
             <tbody>
-              {data!.recurrences.map((r: any) => {
-                const isSel = selectedIds.has(r.id);
-                return (
-                <tr key={r.id} className={`border-t border-border hover:bg-secondary/30 cursor-pointer ${!r.is_active ? "opacity-50" : ""} ${isSel ? "bg-primary/5" : ""}`}
-                    onClick={() => setForm({
-                      id: r.id, name: r.name, merchant_pattern: r.merchant_pattern ?? "",
-                      account_id: r.account_id, category_id: r.category_id, amount_usd: Number(r.amount_usd),
-                      cadence: r.cadence, day_of_month: r.day_of_month, next_date: r.next_date,
-                      is_income: r.is_income, is_active: r.is_active, notes: r.notes ?? "",
-                    })}>
-                  <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
-                    <input type="checkbox" checked={isSel} onChange={() => toggleOne(r.id)} aria-label="Selecionar" />
+              {grouped && groups ? groups.flatMap((g) => [
+                <tr key={`g-${g.key}`} className="bg-secondary/15 border-t border-border">
+                  <td colSpan={8} className="px-3 py-1.5">
+                    <div className="flex items-center gap-2 text-xs">
+                      <div className="h-2.5 w-2.5 rounded-full" style={{ background: g.color }} />
+                      <span className="font-semibold">{g.name}</span>
+                      <span className="text-muted-foreground">· {g.total} item(s) · {formatCurrency(g.sum)}/mês</span>
+                    </div>
                   </td>
-                  <td className="px-4 py-2">
-                    <div className="font-medium">{r.name}</div>
-                    {r.source === "auto" && <div className="text-[10px] text-muted-foreground uppercase tracking-widest">auto</div>}
-                  </td>
-                  <td className="px-4 py-2 text-muted-foreground">{categoryName(r.category_id)}</td>
-                  <td className="px-4 py-2 text-muted-foreground">{accountName(r.account_id)}</td>
-                  <td className="px-4 py-2">{cadenceLabel[r.cadence]}</td>
-                  <td className="px-4 py-2 text-muted-foreground">{r.next_date}</td>
-                  <td className={`px-4 py-2 text-right tabular-nums ${r.is_income ? "text-emerald-400" : ""}`}>
-                    {formatCurrency(Number(r.amount_usd))}
-                  </td>
-                  <td className="px-2 py-2">
-                    <button onClick={(e) => { e.stopPropagation(); if (confirm(`Excluir "${r.name}"?`)) remove.mutate(r.id); }}
-                            className="text-muted-foreground hover:text-destructive p-1">
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </td>
-                </tr>
-                );
-              })}
+                </tr>,
+                ...g.subs.flatMap((s) => [
+                  ...(s.sub ? [
+                    <tr key={`s-${g.key}-${s.sub.id}`} className="bg-secondary/5">
+                      <td colSpan={8} className="px-3 py-1 pl-8 text-[11px] text-muted-foreground uppercase tracking-wider">↳ {s.sub.name}</td>
+                    </tr>
+                  ] : []),
+                  ...s.items.map((r: any) => renderRow(r))
+                ])
+              ]) : recs.map((r: any) => renderRow(r))}
             </tbody>
           </table>
         )}
@@ -375,5 +492,15 @@ function Card({ label, value, accent }: { label: string; value: string; accent?:
       <div className="text-xs uppercase tracking-widest text-muted-foreground">{label}</div>
       <div className={`mt-1 text-xl font-semibold ${accent ?? ""}`}>{value}</div>
     </div>
+  );
+}
+
+function SortBtn({ label, active, dir, onClick, right }: { label: string; active: boolean; dir: "asc" | "desc"; onClick: () => void; right?: boolean }) {
+  return (
+    <button onClick={onClick} className={`inline-flex items-center gap-1 hover:text-foreground ${active ? "text-foreground" : ""} ${right ? "ml-auto" : ""}`}>
+      {label}
+      <ArrowUpDown className={`h-3 w-3 ${active ? "opacity-100" : "opacity-40"}`} />
+      {active && <span className="text-[9px]">{dir === "asc" ? "↑" : "↓"}</span>}
+    </button>
   );
 }

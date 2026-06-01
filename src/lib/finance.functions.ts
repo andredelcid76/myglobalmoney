@@ -371,6 +371,7 @@ export const upsertCategory = createServerFn({ method: "POST" })
     parent_id: z.string().uuid().nullable().optional(),
     color: z.string().max(20).optional(),
     is_income: z.boolean().optional(),
+    budget_group: z.enum(["fixa", "variavel"]).optional(),
   }).parse(d))
   .handler(async ({ data, context }) => {
     const payload = { ...data, user_id: context.userId };
