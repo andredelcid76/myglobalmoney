@@ -19,6 +19,9 @@ function LoginPage() {
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState("");
+  const [forgotBusy, setForgotBusy] = useState(false);
   const { user } = useAuth();
   const navigate = useNavigate();
 
@@ -45,6 +48,24 @@ function LoginPage() {
       toast.error(err.message ?? "Erro");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function sendReset(e: React.FormEvent) {
+    e.preventDefault();
+    setForgotBusy(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(forgotEmail, {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+      if (error) throw error;
+      toast.success("Enviamos um link de redefinição para seu email.");
+      setForgotOpen(false);
+      setForgotEmail("");
+    } catch (err: any) {
+      toast.error(err.message ?? "Erro");
+    } finally {
+      setForgotBusy(false);
     }
   }
 
@@ -96,6 +117,37 @@ function LoginPage() {
               {busy ? "..." : mode === "signin" ? "Entrar" : "Criar conta"}
             </Button>
           </form>
+          {mode === "signin" && (
+            <button
+              type="button"
+              onClick={() => { setForgotEmail(email); setForgotOpen((v) => !v); }}
+              className="mt-3 w-full text-center text-xs text-muted-foreground hover:text-foreground"
+            >
+              Esqueceu sua senha?
+            </button>
+          )}
+          {forgotOpen && (
+            <form onSubmit={sendReset} className="mt-4 space-y-3 rounded-lg border border-border bg-muted/30 p-4">
+              <div className="space-y-1.5">
+                <Label htmlFor="forgot-email">Email para redefinir senha</Label>
+                <Input
+                  id="forgot-email"
+                  type="email"
+                  value={forgotEmail}
+                  onChange={(e) => setForgotEmail(e.target.value)}
+                  required
+                />
+              </div>
+              <div className="flex gap-2">
+                <Button type="submit" className="flex-1" disabled={forgotBusy}>
+                  {forgotBusy ? "..." : "Enviar link"}
+                </Button>
+                <Button type="button" variant="outline" onClick={() => setForgotOpen(false)}>
+                  Cancelar
+                </Button>
+              </div>
+            </form>
+          )}
           <button
             type="button"
             onClick={() => setMode(mode === "signin" ? "signup" : "signin")}
