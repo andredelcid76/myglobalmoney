@@ -1,0 +1,1 @@
+create unique index if not exists transactions_user_acct_ext_uniq on public.transactions (user_id, account_id, external_id);
