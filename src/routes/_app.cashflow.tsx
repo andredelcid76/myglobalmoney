@@ -11,12 +11,13 @@ export const Route = createFileRoute("/_app/cashflow")({ component: CashflowPage
 
 function CashflowPage() {
   const [granularity, setGranularity] = useState<"daily" | "weekly" | "monthly" | "quarterly" | "yearly">("monthly");
+  const [includeProjections, setIncludeProjections] = useState(true);
   const periodsByGran: Record<string, number> = { daily: 60, weekly: 12, monthly: 12, quarterly: 4, yearly: 5 };
   const periods = periodsByGran[granularity];
   const fetchCf = useServerFn(getCashflow);
   const { data } = useQuery({
-    queryKey: ["cashflow", granularity, periods],
-    queryFn: () => fetchCf({ data: { granularity, periods } }),
+    queryKey: ["cashflow", granularity, periods, includeProjections],
+    queryFn: () => fetchCf({ data: { granularity, periods, includeProjections } }),
   });
 
   return (
@@ -28,13 +29,14 @@ function CashflowPage() {
       {!data ? (
         <div className="text-sm text-muted-foreground">Carregando fluxo de caixa…</div>
       ) : (
-        <CashflowView data={data} granularity={granularity} setGranularity={setGranularity} />
+        <CashflowView data={data} granularity={granularity} setGranularity={setGranularity}
+          includeProjections={includeProjections} setIncludeProjections={setIncludeProjections} />
       )}
     </div>
   );
 }
 
-function CashflowView({ data, granularity, setGranularity }: any) {
+function CashflowView({ data, granularity, setGranularity, includeProjections, setIncludeProjections }: any) {
   const chart = data.series.map((s: any) => ({
     label: s.label,
     income: Math.round(s.income),
@@ -60,7 +62,19 @@ function CashflowView({ data, granularity, setGranularity }: any) {
             </button>
           ))}
         </div>
-        <div className="text-xs text-muted-foreground">{data.series.length} períodos</div>
+        <div className="flex items-center gap-3">
+          <div className="inline-flex rounded-md border border-border overflow-hidden text-sm">
+            <button onClick={() => setIncludeProjections(false)}
+              className={`px-3 py-1.5 ${!includeProjections ? "bg-primary text-primary-foreground" : "bg-card hover:bg-secondary/40"}`}>
+              Só confirmadas
+            </button>
+            <button onClick={() => setIncludeProjections(true)}
+              className={`px-3 py-1.5 ${includeProjections ? "bg-primary text-primary-foreground" : "bg-card hover:bg-secondary/40"}`}>
+              + Projeções
+            </button>
+          </div>
+          <div className="text-xs text-muted-foreground">{data.series.length} períodos</div>
+        </div>
       </div>
 
       <div className="grid sm:grid-cols-4 gap-3">

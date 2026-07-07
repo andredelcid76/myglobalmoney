@@ -732,6 +732,7 @@ export const getCashflow = createServerFn({ method: "POST" })
   .inputValidator((d) => z.object({
     granularity: z.enum(["daily", "weekly", "monthly", "quarterly", "yearly"]).default("monthly"),
     periods: z.number().int().min(2).max(365).default(12),
+    includeProjections: z.boolean().default(true),
   }).parse(d))
   .handler(async ({ data, context }) => {
     const now = new Date();
@@ -781,17 +782,21 @@ export const getCashflow = createServerFn({ method: "POST" })
     const horizonEnd = buckets[buckets.length - 1].end;
     const histStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 3, 1));
     const histStartStr = histStart.toISOString().slice(0, 10);
+    const todayStr0 = today.toISOString().slice(0, 10);
+    const horizonEndStr = horizonEnd.toISOString().slice(0, 10);
 
-    const [txRes, accRes, recsRes, budgetsRes, allTxRes] = await Promise.all([
-      context.supabase.from("transactions").select("date, amount_usd, category_id").eq("user_id", context.userId).eq("is_transfer", false).gte("date", histStartStr),
+    const [txRes, accRes, recsRes, budgetsRes, allTxRes, futureTxRes] = await Promise.all([
+      context.supabase.from("transactions").select("date, amount_usd, category_id, is_pending").eq("user_id", context.userId).eq("is_transfer", false).gte("date", histStartStr).lte("date", todayStr0),
       context.supabase.from("accounts").select("initial_balance").eq("user_id", context.userId).eq("is_archived", false),
       context.supabase.from("recurrences").select("name, amount_usd, cadence, is_income, next_date, is_active").eq("user_id", context.userId).eq("is_active", true),
       context.supabase.from("budgets").select("month, amount_usd, budget_type"),
-      context.supabase.from("transactions").select("amount_usd").eq("user_id", context.userId),
+      context.supabase.from("transactions").select("amount_usd, is_pending, date").eq("user_id", context.userId),
+      context.supabase.from("transactions").select("date, amount_usd, is_pending, is_transfer").eq("user_id", context.userId).gt("date", todayStr0).lte("date", horizonEndStr),
     ]);
-    const hist = txRes.data ?? [];
+    const hist = (txRes.data ?? []).filter((t: any) => !t.is_pending);
     const recs = recsRes.data ?? [];
     const budgets = (budgetsRes.data ?? []).filter((b: any) => true);
+    const futureTx = (futureTxRes.data ?? []).filter((t: any) => data.includeProjections ? true : !t.is_pending);
 
     // Historical daily average expense (last 3 closed months)
     const histDays = Math.max(1, Math.round((today.getTime() - histStart.getTime()) / 86400000));
@@ -803,9 +808,11 @@ export const getCashflow = createServerFn({ method: "POST" })
     const avgIncomePerDay = histIncome / histDays;
     const avgExpensePerDay = histExpense / histDays;
 
-    // Current net worth (USD): initial balances + sum of all amount_usd
+    // Current net worth (USD): initial balances + sum of confirmed tx up to today
     const initial = (accRes.data ?? []).reduce((s, a) => s + Number(a.initial_balance ?? 0), 0);
-    const allTxSum = (allTxRes.data ?? []).reduce((s, t) => s + Number(t.amount_usd ?? 0), 0);
+    const allTxSum = (allTxRes.data ?? [])
+      .filter((t: any) => !t.is_pending && (t.date as string) <= todayStr0)
+      .reduce((s: number, t: any) => s + Number(t.amount_usd ?? 0), 0);
     const currentNet = initial + allTxSum;
 
     // Build occurrences for each recurrence within horizon
@@ -861,6 +868,17 @@ export const getCashflow = createServerFn({ method: "POST" })
       const recIncome = inOcc.filter((o) => o.isIncome).reduce((s, o) => s + o.amount, 0);
       const recExpense = inOcc.filter((o) => !o.isIncome).reduce((s, o) => s + o.amount, 0);
 
+      // Future transactions (confirmed always; pending only when includeProjections)
+      const bStart = b.start.toISOString().slice(0, 10);
+      const bEnd = b.end.toISOString().slice(0, 10);
+      let txIncome = 0, txExpense = 0;
+      for (const t of futureTx) {
+        const ds = t.date as string;
+        if (ds < bStart || ds > bEnd) continue;
+        const amt = Number(t.amount_usd);
+        if (amt >= 0) txIncome += amt; else txExpense += -amt;
+      }
+
       // Apportion budgets across overlap (for weekly buckets, slice month by days).
       // Variable budget: distribute the *remaining* budget of each month
       // (max(0, monthly - realized-so-far)) across the *remaining* days of the
@@ -897,7 +915,7 @@ export const getCashflow = createServerFn({ method: "POST" })
         monthCursor.setUTCMonth(monthCursor.getUTCMonth() + 1);
       }
 
-      const fixed = recExpense + budgetFixed;
+      const fixed = recExpense + budgetFixed + txExpense;
       // Variable: prefer budget; fallback to hist avg (minus fixed already covered)
       const histExpBucket = avgExpensePerDay * b.days;
       const variable = budgetVariable > 0 ? budgetVariable : Math.max(0, histExpBucket - fixed);
@@ -905,7 +923,7 @@ export const getCashflow = createServerFn({ method: "POST" })
 
       // Income: recurring + uncovered hist avg
       const histIncBucket = avgIncomePerDay * b.days;
-      const income = Math.max(recIncome, histIncBucket);
+      const income = Math.max(recIncome + txIncome, histIncBucket);
 
       const net = income - expense;
       cumulative += net;
