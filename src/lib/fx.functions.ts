@@ -1,6 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 // Fetches USD->BRL rate for a given date. Caches in exchange_rates table.
 // Source: Frankfurter (ECB) — free, no key.
@@ -16,6 +15,7 @@ async function fetchRate(date: string): Promise<number> {
 export const getUsdBrlRate = createServerFn({ method: "POST" })
   .inputValidator((d) => z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }).parse(d))
   .handler(async ({ data }) => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     // Frankfurter returns latest available business day if weekend
     const { data: cached } = await supabaseAdmin
       .from("exchange_rates")
@@ -47,6 +47,7 @@ export const getUsdBrlRate = createServerFn({ method: "POST" })
   });
 
 export const getLatestUsdBrl = createServerFn({ method: "GET" }).handler(async () => {
+  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
   const today = new Date().toISOString().slice(0, 10);
   const { data: cached } = await supabaseAdmin
     .from("exchange_rates")
