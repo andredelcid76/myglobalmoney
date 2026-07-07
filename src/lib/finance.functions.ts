@@ -290,7 +290,9 @@ export const setAccountBalanceToday = createServerFn({ method: "POST" })
       currency: cur,
       amount_usd: delta_usd,
       exchange_rate,
-      is_transfer: false,
+      // Acerto contábil, não receita/despesa real: como transferência,
+      // entra no saldo mas fica fora das estatísticas de receita/gasto
+      is_transfer: true,
       is_pending: false,
     });
     if (error) throw new Error(error.message);
