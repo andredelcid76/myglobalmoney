@@ -113,7 +113,7 @@ function ImportPage() {
             notes: r.notes || null,
             amount: r.amount, currency: acc.currency,
             amount_usd: Number(amtUsd.toFixed(2)),
-            exchange_rate: rate,
+            exchange_rate: rate ? Number((1 / rate).toFixed(6)) : null, // convenção: moeda nativa → USD
             account_id: acc.id,
             category_id: catByName.get(r.category.toLowerCase()) ?? null,
             is_transfer: r.category.toLowerCase() === "transfer",

@@ -298,7 +298,7 @@ export function NubankImport() {
           amount: t.amount,
           currency: "BRL",
           amount_usd: Number((t.amount / rate).toFixed(2)),
-          exchange_rate: rate,
+          exchange_rate: Number((1 / rate).toFixed(6)), // convenção: moeda nativa → USD
           account_id: accountId,
           category_id: t.category_id,
           is_transfer: false,
@@ -318,7 +318,7 @@ export function NubankImport() {
           amount: Number(preview.iofNet.toFixed(2)),
           currency: "BRL",
           amount_usd: Number((preview.iofNet / rate).toFixed(2)),
-          exchange_rate: rate,
+          exchange_rate: Number((1 / rate).toFixed(6)), // convenção: moeda nativa → USD
           account_id: accountId,
           category_id: feesCategoryId || null,
           is_transfer: false,
