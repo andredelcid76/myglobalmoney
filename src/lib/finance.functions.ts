@@ -183,16 +183,30 @@ export const createTransaction = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     let exchange_rate = 1;
     if (data.currency !== "USD") {
-      const { data: rate } = await context.supabase
+      // A tabela guarda apenas USD→moeda; a taxa da transação é moeda→USD (inverso)
+      const { data: r1 } = await context.supabase
         .from("exchange_rates")
-        .select("rate, date")
-        .eq("base", data.currency)
-        .eq("quote", "USD")
+        .select("rate")
+        .eq("base", "USD")
+        .eq("quote", data.currency)
         .lte("date", data.date)
         .order("date", { ascending: false })
         .limit(1)
         .maybeSingle();
-      if (rate) exchange_rate = Number(rate.rate);
+      let usdToCur = r1 ? Number(r1.rate) : 0;
+      if (!usdToCur) {
+        const { data: r2 } = await context.supabase
+          .from("exchange_rates")
+          .select("rate")
+          .eq("base", "USD")
+          .eq("quote", data.currency)
+          .order("date", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (r2) usdToCur = Number(r2.rate);
+      }
+      if (!usdToCur) throw new Error(`Sem cotação USD/${data.currency} disponível — abra o dashboard para atualizar o câmbio e tente novamente`);
+      exchange_rate = 1 / usdToCur;
     }
     const amount_usd = Number((data.amount * exchange_rate).toFixed(2));
     const { error } = await context.supabase.from("transactions").insert({
