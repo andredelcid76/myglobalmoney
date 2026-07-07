@@ -1,0 +1,2 @@
+INSERT INTO public.accounts (id, user_id, name, type, currency, initial_balance, institution, color)
+VALUES ('22222222-2222-2222-2222-222222222222', '90e612db-9508-490b-ab84-37e56fd7a06b', 'Nubank Cartão', 'credit_card', 'BRL', 0, 'Nubank', '#8a05be');

@@ -1,0 +1,1 @@
+UPDATE public.accounts SET initial_balance = 230348.05 WHERE id = '22222222-2222-2222-2222-222222222222';
