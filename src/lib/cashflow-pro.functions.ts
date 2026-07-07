@@ -109,7 +109,7 @@ export const getCashflowPro = createServerFn({ method: "POST" })
 
     // ---- Per-account opening balance (today)
     const balByAccount = new Map<string, number>();
-    for (const a of accounts) balByAccount.set(a.id, Number(a.initial_balance ?? 0));
+    for (const a of accounts) balByAccount.set(a.id, toUsd(Number(a.initial_balance ?? 0), (a.currency as string) ?? "USD"));
     for (const t of allTxRows) {
       if (t.is_pending) continue;
       const cur = balByAccount.get(t.account_id) ?? 0;

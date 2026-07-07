@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { fetchAllPages } from "@/lib/paginated-query";
+import { getLatestUsdBrlRate, initialBalanceUsd } from "@/lib/fx-helpers";
 
 // Compute the statement (fatura) period containing `today` for a card with
 // the given closing day. The period runs from the day AFTER the previous
@@ -65,6 +66,7 @@ export const getCreditCardStatements = createServerFn({ method: "POST" })
     const accounts = accRes.data ?? [];
     const today = new Date();
     const todayStr = ymd(today);
+    const usdBrl = await getLatestUsdBrlRate(supabase);
 
     const cards = accounts.map((a: any) => {
       const closing = a.closing_day ?? null;
@@ -73,7 +75,7 @@ export const getCreditCardStatements = createServerFn({ method: "POST" })
       const confirmedCardTx = allCardTx.filter((t: any) => !t.is_pending && t.date <= todayStr);
       const cardTx = allCardTx.filter((t: any) => !t.is_transfer && !t.is_pending);
       // total owed today (includes payments / transfers reducing the debt)
-      const balance = Number(a.initial_balance || 0) + confirmedCardTx.reduce((s: number, t: any) => s + Number(t.amount_usd || 0), 0);
+      const balance = initialBalanceUsd(a, usdBrl) + confirmedCardTx.reduce((s: number, t: any) => s + Number(t.amount_usd || 0), 0);
       const totalOwed = Math.max(0, -balance);
 
       if (!closing || !due) {

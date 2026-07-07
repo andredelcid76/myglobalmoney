@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { fetchAllPages } from "@/lib/paginated-query";
+import { getLatestUsdBrlRate, initialBalanceUsd } from "@/lib/fx-helpers";
 
 type Granularity = "daily" | "weekly" | "monthly";
 
@@ -101,7 +102,8 @@ export const getLedgerView = createServerFn({ method: "POST" })
     // Opening balance
     let opening = 0;
     if (useUsd) {
-      opening = accounts.reduce((s, a) => s + Number(a.initial_balance ?? 0), 0);
+      const usdBrl = await getLatestUsdBrlRate(supabase);
+      opening = accounts.reduce((s, a) => s + initialBalanceUsd(a, usdBrl), 0);
       for (const t of txBeforeRows) if (!t.is_pending) opening += Number(t.amount_usd ?? 0);
     } else if (account) {
       opening = Number(account.initial_balance ?? 0);

@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { fetchAllPages } from "@/lib/paginated-query";
+import { getLatestUsdBrlRate, initialBalanceUsd } from "@/lib/fx-helpers";
 
 export const getOverview = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -665,8 +666,9 @@ export const getProjections = createServerFn({ method: "POST" })
     const avgIncome = histKeys.reduce((s, k) => s + (byMonth.get(k)?.income ?? 0), 0) / Math.max(histKeys.length, 1);
     const avgExpense = histKeys.reduce((s, k) => s + (byMonth.get(k)?.expense ?? 0), 0) / Math.max(histKeys.length, 1);
 
-    // Current net worth in USD (initial balances + sum of all amount_usd)
-    const initial = (accountsRes.data ?? []).reduce((s, a) => s + Number(a.initial_balance ?? 0), 0);
+    // Current net worth in USD (initial balances converted to USD + sum of all amount_usd)
+    const usdBrl = await getLatestUsdBrlRate(context.supabase);
+    const initial = (accountsRes.data ?? []).reduce((s, a) => s + initialBalanceUsd(a, usdBrl), 0);
     const totalTx = confirmedTx.reduce((s, t) => s + Number(t.amount_usd ?? 0), 0);
     // include older tx too
     const older = await fetchAllPages<any>(() => context.supabase.from("transactions").select("amount_usd, is_pending").eq("user_id", context.userId).lt("date", startStr));
@@ -807,7 +809,7 @@ export const getCashflow = createServerFn({ method: "POST" })
 
     const [txRows, accRes, recsRes, budgetsRes, allTxRows, futureTxRows] = await Promise.all([
       fetchAllPages<any>(() => context.supabase.from("transactions").select("date, amount_usd, category_id, is_pending").eq("user_id", context.userId).eq("is_transfer", false).gte("date", histStartStr).lte("date", todayStr0)),
-      context.supabase.from("accounts").select("initial_balance").eq("user_id", context.userId).eq("is_archived", false),
+      context.supabase.from("accounts").select("currency, initial_balance").eq("user_id", context.userId).eq("is_archived", false),
       context.supabase.from("recurrences").select("name, amount_usd, cadence, is_income, next_date, is_active").eq("user_id", context.userId).eq("is_active", true),
       context.supabase.from("budgets").select("month, amount_usd, budget_type"),
       fetchAllPages<any>(() => context.supabase.from("transactions").select("amount_usd, is_pending, date").eq("user_id", context.userId)),
@@ -828,8 +830,9 @@ export const getCashflow = createServerFn({ method: "POST" })
     const avgIncomePerDay = histIncome / histDays;
     const avgExpensePerDay = histExpense / histDays;
 
-    // Current net worth (USD): initial balances + sum of confirmed tx up to today
-    const initial = (accRes.data ?? []).reduce((s, a) => s + Number(a.initial_balance ?? 0), 0);
+    // Current net worth (USD): initial balances converted to USD + sum of confirmed tx up to today
+    const usdBrl = await getLatestUsdBrlRate(context.supabase);
+    const initial = (accRes.data ?? []).reduce((s, a) => s + initialBalanceUsd(a, usdBrl), 0);
     const allTxSum = allTxRows
       .filter((t: any) => !t.is_pending && (t.date as string) <= todayStr0)
       .reduce((s: number, t: any) => s + Number(t.amount_usd ?? 0), 0);
