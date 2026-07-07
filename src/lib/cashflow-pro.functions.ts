@@ -75,7 +75,7 @@ export const getCashflowPro = createServerFn({ method: "POST" })
     const horizonStop = buckets[buckets.length - 1].end;
 
     const histStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 3, 1));
-    const [accRes, recsRes, budgetsRes, goalsRes, txRecentRes, allTxRes] = await Promise.all([
+    const [accRes, recsRes, budgetsRes, goalsRes, txRecentRes, allTxRes, ratesRes] = await Promise.all([
       sb.from("accounts").select("*").eq("user_id", userId).eq("is_archived", false),
       sb.from("recurrences").select("*").eq("user_id", userId).eq("is_active", true),
       sb.from("budgets").select("month, amount_usd, budget_type, category_id").eq("user_id", userId),
@@ -83,12 +83,27 @@ export const getCashflowPro = createServerFn({ method: "POST" })
       sb.from("transactions").select("date, amount_usd, account_id, is_transfer")
         .eq("user_id", userId).gte("date", fmt(histStart)),
       sb.from("transactions").select("amount_usd, account_id").eq("user_id", userId),
+      sb.from("exchange_rates").select("base, quote, rate, date").order("date", { ascending: false }).limit(200),
     ]);
 
     const accounts = (accRes.data ?? []) as any[];
     const recs = (recsRes.data ?? []) as any[];
     const budgets = (budgetsRes.data ?? []) as any[];
     const goals = (goalsRes.data ?? []) as any[];
+
+    // Latest FX rate per currency → USD
+    const latestToUsd = new Map<string, number>();
+    latestToUsd.set("USD", 1);
+    for (const r of ratesRes.data ?? []) {
+      const base = r.base as string, quote = r.quote as string;
+      const rate = Number(r.rate);
+      if (base === "USD" && !latestToUsd.has(quote)) latestToUsd.set(quote, 1 / rate);
+      if (quote === "USD" && !latestToUsd.has(base)) latestToUsd.set(base, rate);
+    }
+    const toUsd = (amount: number, currency: string) => {
+      const f = latestToUsd.get(currency);
+      return f != null ? amount * f : amount;
+    };
 
     // ---- Per-account opening balance (today)
     const balByAccount = new Map<string, number>();
@@ -136,13 +151,18 @@ export const getCashflowPro = createServerFn({ method: "POST" })
 
     for (const r of recs) {
       const cad = r.cadence as string;
+      const endDate = r.end_date ? new Date((r.end_date as string) + "T00:00:00Z") : null;
       let d = new Date((r.next_date as string) + "T00:00:00Z");
       while (d < buckets[0].start) d = advanceByCadence(d, cad);
       let guard = 0;
       while (d <= horizonStop && guard < 500) {
+        if (endDate && d > endDate) break;
         const b = bucketOf(d);
         if (b >= 0) {
-          const amt = Math.abs(Number(r.amount_usd)) * (r.is_income ? incAdj : expAdj);
+          const rawAmt = r.amount != null && r.currency && r.currency !== "USD"
+            ? toUsd(Number(r.amount), r.currency as string)
+            : Number(r.amount_usd);
+          const amt = Math.abs(rawAmt) * (r.is_income ? incAdj : expAdj);
           items.push({
             date: fmt(d), bucket: b,
             account_id: r.account_id ?? defaultAcc,
