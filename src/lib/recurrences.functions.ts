@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { fetchAllPages } from "@/lib/paginated-query";
 
 export const listRecurrences = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -111,14 +112,13 @@ export const detectRecurrences = createServerFn({ method: "POST" })
     const since = new Date();
     since.setUTCMonth(since.getUTCMonth() - 9);
     const sinceStr = since.toISOString().slice(0, 10);
-    const { data: txs, error } = await context.supabase
+    const txs = await fetchAllPages<any>(() => context.supabase
       .from("transactions")
       .select("date, merchant, amount_usd, account_id, category_id")
       .eq("user_id", context.userId)
       .eq("is_transfer", false)
       .gte("date", sinceStr)
-      .order("date");
-    if (error) throw new Error(error.message);
+      .order("date"));
 
     // Group by normalized merchant
     const groups = new Map<string, typeof txs>();

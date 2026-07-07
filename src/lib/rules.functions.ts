@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { fetchAllPages } from "@/lib/paginated-query";
 
 function matches(merchant: string, pattern: string, matchType: string): boolean {
   const m = merchant.toLowerCase();
@@ -60,16 +61,14 @@ export const applyRules = createServerFn({ method: "POST" })
   .inputValidator((d) => z.object({ scope: z.enum(["uncategorized", "all"]).default("uncategorized") }).parse(d))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    const [rulesRes, txRes] = await Promise.all([
+    const [rulesRes, txs] = await Promise.all([
       supabase.from("categorization_rules").select("*").eq("user_id", userId).eq("is_active", true).order("priority", { ascending: false }),
-      data.scope === "uncategorized"
-        ? supabase.from("transactions").select("id, merchant, category_id").eq("user_id", userId).is("category_id", null).eq("is_transfer", false)
-        : supabase.from("transactions").select("id, merchant, category_id").eq("user_id", userId).eq("is_transfer", false),
+      fetchAllPages<any>(() => data.scope === "uncategorized"
+        ? supabase.from("transactions").select("id, merchant, category_id").eq("user_id", userId).is("category_id", null).eq("is_transfer", false).order("id")
+        : supabase.from("transactions").select("id, merchant, category_id").eq("user_id", userId).eq("is_transfer", false).order("id")),
     ]);
     if (rulesRes.error) throw new Error(rulesRes.error.message);
-    if (txRes.error) throw new Error(txRes.error.message);
     const rules = rulesRes.data ?? [];
-    const txs = txRes.data ?? [];
 
     let updated = 0;
     const updates: { id: string; category_id: string }[] = [];
