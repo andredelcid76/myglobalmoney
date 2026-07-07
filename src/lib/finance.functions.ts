@@ -309,6 +309,27 @@ export const importTransactions = createServerFn({ method: "POST" })
     return { inserted };
   });
 
+// Fetch existing transactions for an account within a date window,
+// used by the Nubank raw-CSV importer to detect duplicates client-side.
+export const listAccountTxForDedup = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => z.object({
+    accountId: z.string().uuid(),
+    sinceDate: z.string(),
+    untilDate: z.string(),
+  }).parse(d))
+  .handler(async ({ data, context }) => {
+    const { data: tx, error } = await context.supabase
+      .from("transactions")
+      .select("id, date, merchant, amount, currency")
+      .eq("user_id", context.userId)
+      .eq("account_id", data.accountId)
+      .gte("date", data.sinceDate)
+      .lte("date", data.untilDate);
+    if (error) throw new Error(error.message);
+    return { transactions: tx ?? [] };
+  });
+
 // ---------- Accounts ----------
 export const listAccounts = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
