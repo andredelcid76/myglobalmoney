@@ -106,7 +106,8 @@ export const getCreditCardStatements = createServerFn({ method: "POST" })
         const startStr = ymd(s.start);
         const closeStr = ymd(s.close);
         const txs = cardTx.filter((t: any) => t.date >= startStr && t.date <= closeStr);
-        const totalUsd = txs.reduce((sum: number, t: any) => sum + Math.abs(Number(t.amount_usd) || 0), 0);
+        // Despesa é negativa e estorno positivo abate a fatura (não usar abs)
+        const totalUsd = Math.max(0, -txs.reduce((sum: number, t: any) => sum + (Number(t.amount_usd) || 0), 0));
         return {
           label,
           start: startStr,

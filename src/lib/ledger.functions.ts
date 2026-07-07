@@ -336,15 +336,16 @@ export const getLedgerView = createServerFn({ method: "POST" })
             const tt = t as any;
             if (tt.account_id !== accId || tt.is_transfer || tt.is_pending) continue;
             const d = tt.date as string;
-            if (d >= startStr && d <= closeStr) s += Math.abs(Number(tt.amount_usd ?? 0));
+            if (d >= startStr && d <= closeStr) s += Number(tt.amount_usd ?? 0);
           }
           for (const t of txInRows) {
             const tt = t as any;
             if (tt.account_id !== accId || tt.is_transfer || tt.is_pending) continue;
             const d = tt.date as string;
-            if (d >= startStr && d <= closeStr) s += Math.abs(Number(tt.amount_usd ?? 0));
+            if (d >= startStr && d <= closeStr) s += Number(tt.amount_usd ?? 0);
           }
-          return s;
+          // Despesa é negativa e estorno positivo abate a fatura (não usar abs)
+          return Math.max(0, -s);
         }
         for (const a of accounts as any[]) {
           if (a.type !== "credit_card") continue;
