@@ -6,6 +6,7 @@ import {
   detectRecurrences, saveDetectedRecurrences,
   bulkUpdateRecurrences, bulkDeleteRecurrences,
 } from "@/lib/recurrences.functions";
+import { getLatestUsdBrl } from "@/lib/fx.functions";
 import { formatCurrency } from "@/lib/format";
 import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
@@ -23,9 +24,12 @@ type Form = {
   account_id: string | null;
   category_id: string | null;
   amount_usd: number;
+  amount: number | null;
+  currency: "USD" | "BRL";
   cadence: "weekly" | "biweekly" | "monthly" | "quarterly" | "yearly";
   day_of_month: number | null;
   next_date: string;
+  end_date: string | null;
   is_income: boolean;
   is_active: boolean;
   notes: string;
@@ -34,7 +38,8 @@ type Form = {
 const today = () => new Date().toISOString().slice(0, 10);
 const empty: Form = {
   name: "", merchant_pattern: "", account_id: null, category_id: null,
-  amount_usd: 0, cadence: "monthly", day_of_month: 1, next_date: today(),
+  amount_usd: 0, amount: null, currency: "USD",
+  cadence: "monthly", day_of_month: 1, next_date: today(), end_date: null,
   is_income: false, is_active: true, notes: "",
 };
 
@@ -56,6 +61,9 @@ function RecurrencesPage() {
   const qc = useQueryClient();
 
   const { data } = useQuery({ queryKey: ["recurrences"], queryFn: () => fetchList() });
+  const fetchFx = useServerFn(getLatestUsdBrl);
+  const { data: fx } = useQuery({ queryKey: ["fx-latest"], queryFn: () => fetchFx() });
+  const usdBrl = Number(fx?.rate ?? 0);
   const [form, setForm] = useState<Form | null>(null);
   const [suggestions, setSuggestions] = useState<any[] | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -71,7 +79,20 @@ function RecurrencesPage() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   const save = useMutation({
-    mutationFn: (v: Form) => upsert({ data: { ...v, merchant_pattern: v.merchant_pattern || null, notes: v.notes || null } as any }),
+    mutationFn: (v: Form) => {
+      const amount_usd = v.currency === "BRL" && v.amount != null && usdBrl > 0
+        ? v.amount / usdBrl
+        : (v.amount ?? v.amount_usd);
+      return upsert({ data: {
+        ...v,
+        amount_usd,
+        amount: v.amount,
+        currency: v.currency,
+        end_date: v.end_date || null,
+        merchant_pattern: v.merchant_pattern || null,
+        notes: v.notes || null,
+      } as any });
+    },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["recurrences"] }); setForm(null); },
   });
   const remove = useMutation({
