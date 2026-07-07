@@ -230,6 +230,57 @@ export const createTransaction = createServerFn({ method: "POST" })
     return { ok: true };
   });
 
+const UpdateTxInput = z.object({
+  id: z.string().uuid(),
+  date: z.string(),
+  merchant: z.string().min(1).max(200),
+  notes: z.string().max(500).nullable().optional(),
+  amount: z.number(),
+  currency: z.enum(["USD", "BRL"]),
+  account_id: z.string().uuid(),
+  category_id: z.string().uuid().nullable().optional(),
+  is_pending: z.boolean().default(false),
+});
+
+export const updateTransaction = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d) => UpdateTxInput.parse(d))
+  .handler(async ({ data, context }) => {
+    // Recalcula amount_usd com a mesma lógica do create (par USD→moeda invertido).
+    let exchange_rate = 1;
+    if (data.currency !== "USD") {
+      const { data: r1 } = await context.supabase
+        .from("exchange_rates").select("rate")
+        .eq("base", "USD").eq("quote", data.currency)
+        .lte("date", data.date).order("date", { ascending: false }).limit(1).maybeSingle();
+      let usdToCur = r1 ? Number(r1.rate) : 0;
+      if (!usdToCur) {
+        const { data: r2 } = await context.supabase
+          .from("exchange_rates").select("rate")
+          .eq("base", "USD").eq("quote", data.currency)
+          .order("date", { ascending: false }).limit(1).maybeSingle();
+        if (r2) usdToCur = Number(r2.rate);
+      }
+      if (!usdToCur) throw new Error(`Sem cotação USD/${data.currency} disponível`);
+      exchange_rate = 1 / usdToCur;
+    }
+    const amount_usd = Number((data.amount * exchange_rate).toFixed(2));
+    const { error } = await context.supabase.from("transactions").update({
+      date: data.date,
+      merchant: data.merchant,
+      notes: data.notes ?? null,
+      amount: data.amount,
+      currency: data.currency,
+      amount_usd,
+      exchange_rate,
+      account_id: data.account_id,
+      category_id: data.category_id ?? null,
+      is_pending: data.is_pending,
+    }).eq("id", data.id).eq("user_id", context.userId);
+    if (error) throw new Error(error.message);
+    return { ok: true };
+  });
+
 export const deleteTransaction = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d) => z.object({ id: z.string().uuid() }).parse(d))

@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { listTransactions, updateTxCategory, bulkUpdateTxCategory, bulkUpdateTxAccount, createTransaction, createTransfer, deleteTransaction } from "@/lib/finance.functions";
+import { listTransactions, updateTxCategory, bulkUpdateTxCategory, bulkUpdateTxAccount, createTransaction, createTransfer, updateTransaction, deleteTransaction } from "@/lib/finance.functions";
 import { splitTransaction, unsplitTransaction, updateTxTags, listAllTags } from "@/lib/splits.functions";
 import { getLedgerView } from "@/lib/ledger.functions";
 import { formatCurrency, formatDate } from "@/lib/format";
@@ -41,6 +41,7 @@ function TxListView() {
   const [tag, setTag] = useState<string>("");
   const [splitTx, setSplitTx] = useState<any | null>(null);
   const [tagsTx, setTagsTx] = useState<any | null>(null);
+  const [editTx, setEditTx] = useState<any | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkCat, setBulkCat] = useState<string>("");
   const fetchTx = useServerFn(listTransactions);
@@ -161,7 +162,9 @@ function TxListView() {
                   </td>
                   <td className="px-3 py-2 text-muted-foreground whitespace-nowrap">{formatDate(t.date)}</td>
                   <td className="px-3 py-2 font-medium">
-                    {t.merchant}
+                    <button onClick={() => setEditTx(t)} className="text-left hover:text-primary hover:underline">
+                      {t.merchant}
+                    </button>
                     {isSplit && <Badge variant="secondary" className="ml-2 text-[10px]"><Split className="h-3 w-3 mr-1" />split</Badge>}
                   </td>
                   <td className="px-3 py-2">
@@ -221,6 +224,9 @@ function TxListView() {
       )}
       {tagsTx && (
         <TagsDialog tx={tagsTx} onClose={() => setTagsTx(null)} />
+      )}
+      {editTx && (
+        <EditTransactionDialog tx={editTx} accounts={data?.accounts ?? []} categories={data?.categories ?? []} onClose={() => setEditTx(null)} />
       )}
     </div>
   );
@@ -430,6 +436,7 @@ function TxLedgerView() {
   const [accountId, setAccountId] = useState<string>("");
   const [newTxOpen, setNewTxOpen] = useState(false);
   const [ledgerSelected, setLedgerSelected] = useState<Set<string>>(new Set());
+  const [editTx, setEditTx] = useState<any | null>(null);
   const [ledgerBulkCat, setLedgerBulkCat] = useState<string>("");
   const qc = useQueryClient();
   const bulkUpdate = useServerFn(bulkUpdateTxCategory);
@@ -687,7 +694,11 @@ function TxLedgerView() {
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <span className={`inline-block h-2.5 w-2.5 rounded-full shrink-0 ${dotColor}`} title={status} />
-                      <span className={`font-medium truncate ${isProjected ? "italic text-muted-foreground" : ""}`}>{t.merchant}</span>
+                      {isProjected ? (
+                        <span className="font-medium truncate italic text-muted-foreground">{t.merchant}</span>
+                      ) : (
+                        <button onClick={() => setEditTx(t)} className="font-medium truncate text-left hover:text-primary hover:underline">{t.merchant}</button>
+                      )}
                       {t.is_transfer && <Badge variant="outline" className="text-[10px]">transf.</Badge>}
                       {t.source === "recurrence" && <Badge variant="outline" className="text-[10px]">recorrente</Badge>}
                       {t.source === "budget" && <Badge variant="outline" className="text-[10px]">orçado</Badge>}
@@ -733,6 +744,14 @@ function TxLedgerView() {
           categories={(data?.categories as any) ?? []}
           defaultAccountId={accountId || (data?.accounts?.[0]?.id ?? "")}
           onClose={() => setNewTxOpen(false)}
+        />
+      )}
+      {editTx && (
+        <EditTransactionDialog
+          tx={editTx}
+          accounts={data?.accounts ?? []}
+          categories={(data?.categories as any) ?? []}
+          onClose={() => setEditTx(null)}
         />
       )}
     </div>
@@ -907,6 +926,140 @@ function NewTransactionDialog({ accounts, categories, defaultAccountId, onClose 
             disabled={m.isPending || !amount || !accountId || (isTransfer ? !toAccountId : !merchant)}>
             Criar
           </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function EditTransactionDialog({ tx, accounts, categories, onClose }: {
+  tx: any; accounts: any[]; categories: any[]; onClose: () => void;
+}) {
+  const stored = Number(tx.amount);
+  const [date, setDate] = useState<string>((tx.date as string).slice(0, 10));
+  const [merchant, setMerchant] = useState<string>(tx.merchant ?? "");
+  const [kind, setKind] = useState<"expense" | "income">(stored < 0 ? "expense" : "income");
+  const [amount, setAmount] = useState<string>(String(Math.abs(stored)));
+  const [accountId, setAccountId] = useState<string>(tx.account_id ?? "");
+  const [categoryId, setCategoryId] = useState<string>(tx.category_id ?? "");
+  const [currency, setCurrency] = useState<"USD" | "BRL">(((tx.currency as string) === "BRL" ? "BRL" : "USD"));
+  const [notes, setNotes] = useState<string>(tx.notes ?? "");
+  const [isPending, setIsPending] = useState<boolean>(!!tx.is_pending);
+  const isTransfer = !!tx.is_transfer;
+  const update = useServerFn(updateTransaction);
+  const del = useServerFn(deleteTransaction);
+  const qc = useQueryClient();
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["ledger"] });
+    qc.invalidateQueries({ queryKey: ["tx"] });
+    qc.invalidateQueries({ queryKey: ["tx-tags"] });
+    qc.invalidateQueries({ queryKey: ["accounts"] });
+  };
+  const mSave = useMutation({
+    mutationFn: () => {
+      const raw = Number(amount);
+      if (!raw || Number.isNaN(raw)) throw new Error("Valor inválido");
+      const signed = kind === "expense" ? -Math.abs(raw) : Math.abs(raw);
+      return update({ data: {
+        id: tx.id, date, merchant, amount: signed, currency,
+        account_id: accountId, category_id: categoryId || null,
+        notes: notes || null, is_pending: isPending,
+      }});
+    },
+    onSuccess: () => { toast.success("Transação atualizada"); invalidate(); onClose(); },
+    onError: (e: any) => toast.error(e.message),
+  });
+  const mDelete = useMutation({
+    mutationFn: () => del({ data: { id: tx.id } }),
+    onSuccess: () => { toast.success("Transação excluída"); invalidate(); onClose(); },
+    onError: (e: any) => toast.error(e.message),
+  });
+
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Editar transação</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-3">
+          {isTransfer && (
+            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-[11px] text-amber-600">
+              Esta é uma perna de transferência. Alterar valor ou conta aqui não mexe na outra perna do par — para refazer a transferência, exclua e crie de novo.
+            </div>
+          )}
+          <div className="inline-flex rounded-md border border-border overflow-hidden text-sm w-full">
+            <button type="button" onClick={() => setKind("expense")}
+              className={`flex-1 px-3 py-1.5 ${kind === "expense" ? "bg-destructive text-destructive-foreground" : "bg-card hover:bg-secondary/40"}`}>
+              Despesa
+            </button>
+            <button type="button" onClick={() => setKind("income")}
+              className={`flex-1 px-3 py-1.5 ${kind === "income" ? "bg-success text-success-foreground" : "bg-card hover:bg-secondary/40"}`}>
+              Receita
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label className="text-xs">Data</Label>
+              <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+            </div>
+            <div>
+              <Label className="text-xs">Valor</Label>
+              <MoneyInput size="lg" showStepper step={10} currency={currency}
+                value={amount} onValueChange={(n) => setAmount(n == null ? "" : String(n))} />
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs">Descrição</Label>
+            <Input value={merchant} onChange={(e) => setMerchant(e.target.value)} />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <Label className="text-xs">Conta</Label>
+              <select value={accountId} onChange={(e) => setAccountId(e.target.value)}
+                className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm">
+                {accounts.map((a: any) => <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <Label className="text-xs">Moeda</Label>
+              <select value={currency} onChange={(e) => setCurrency(e.target.value as any)}
+                className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm">
+                <option value="USD">USD</option>
+                <option value="BRL">BRL</option>
+              </select>
+            </div>
+          </div>
+          <div>
+            <Label className="text-xs">Categoria</Label>
+            <select value={categoryId} onChange={(e) => setCategoryId(e.target.value)}
+              className="w-full rounded-md border border-border bg-input px-3 py-2 text-sm">
+              <option value="">— sem categoria —</option>
+              {categories.map((c: any) => (
+                <option key={c.id} value={c.id}>{c.parent_id ? "  ↳ " : ""}{c.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <Label className="text-xs">Notas</Label>
+            <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Observações" />
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={isPending} onChange={(e) => setIsPending(e.target.checked)} />
+            Pendente (ainda não confirmada — fica fora dos saldos)
+          </label>
+        </div>
+        <DialogFooter className="flex-col-reverse sm:flex-row sm:justify-between gap-2">
+          <Button variant="ghost" className="text-destructive"
+            onClick={() => { if (confirm("Excluir esta transação?")) mDelete.mutate(); }}
+            disabled={mDelete.isPending}>
+            <Trash2 className="h-4 w-4 mr-1" /> Excluir
+          </Button>
+          <div className="flex gap-2 justify-end">
+            <Button variant="ghost" onClick={onClose}>Cancelar</Button>
+            <Button onClick={() => mSave.mutate()} disabled={mSave.isPending || !amount || !merchant || !accountId}>
+              Salvar
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>
