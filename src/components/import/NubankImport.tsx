@@ -85,7 +85,7 @@ type PreparedTx = {
   date: string;
   merchant: string;
   original_statement: string;
-  amount: number;      // BRL, sign per convention (positive = expense on credit card)
+  amount: number;      // BRL, app convention (expense negative, credit/refund positive)
   category_id: string | null;
   isRefund: boolean;
 };
@@ -188,7 +188,7 @@ export function NubankImport() {
       const rows: NubankRow[] = [];
       for (const r of rawRows) {
         if (isPayment(r.title)) continue;
-        if (isIof(r.title)) { iofNet += r.amount; continue; }
+        if (isIof(r.title)) { iofNet += -r.amount; continue; }
         rows.push(r);
       }
       if (rows.length === 0) { toast.error("Nenhuma transação após filtros"); setBusy(false); return; }
@@ -209,7 +209,7 @@ export function NubankImport() {
           date: r.date,
           merchant,
           original_statement: r.title,
-          amount: r.amount, // Nubank convention: positive = compra (despesa), negativo = crédito
+          amount: -r.amount, // CSV Nubank: positivo = compra; app: despesa = negativa → inverte
           category_id,
           isRefund: refund,
         };
@@ -311,7 +311,7 @@ export function NubankImport() {
         rows.push({
           date: preview.lastDate,
           merchant: "IOF — Imposto s/ Operações Financeiras",
-          original_statement: `IOF consolidado (${preview.iofNet >= 0 ? "líquido" : "estorno líquido"})`,
+          original_statement: `IOF consolidado (${preview.iofNet < 0 ? "líquido" : "estorno líquido"})`,
           notes: null,
           amount: Number(preview.iofNet.toFixed(2)),
           currency: "BRL",
@@ -423,7 +423,7 @@ export function NubankImport() {
                         <div>{t.merchant}</div>
                         {t.isRefund && <div className="text-xs text-emerald-400">estorno</div>}
                       </td>
-                      <td className={`px-3 py-2 text-right tabular-nums ${t.amount < 0 ? "text-emerald-400" : ""}`}>
+                      <td className={`px-3 py-2 text-right tabular-nums ${t.amount > 0 ? "text-emerald-400" : ""}`}>
                         {t.amount.toFixed(2)}
                       </td>
                       <td className="px-3 py-2">
