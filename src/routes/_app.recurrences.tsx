@@ -238,7 +238,10 @@ function RecurrencesPage() {
           onClick={() => setForm({
             id: r.id, name: r.name, merchant_pattern: r.merchant_pattern ?? "",
             account_id: r.account_id, category_id: r.category_id, amount_usd: Number(r.amount_usd),
+            amount: r.amount != null ? Number(r.amount) : Number(r.amount_usd),
+            currency: (r.currency as "USD" | "BRL") ?? "USD",
             cadence: r.cadence, day_of_month: r.day_of_month, next_date: r.next_date,
+            end_date: r.end_date ?? null,
             is_income: r.is_income, is_active: r.is_active, notes: r.notes ?? "",
           })}>
         <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
