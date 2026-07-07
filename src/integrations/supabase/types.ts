@@ -294,11 +294,14 @@ export type Database = {
       recurrences: {
         Row: {
           account_id: string | null
+          amount: number | null
           amount_usd: number
           cadence: string
           category_id: string | null
           created_at: string
+          currency: string
           day_of_month: number | null
+          end_date: string | null
           id: string
           is_active: boolean
           is_income: boolean
@@ -312,11 +315,14 @@ export type Database = {
         }
         Insert: {
           account_id?: string | null
+          amount?: number | null
           amount_usd: number
           cadence: string
           category_id?: string | null
           created_at?: string
+          currency?: string
           day_of_month?: number | null
+          end_date?: string | null
           id?: string
           is_active?: boolean
           is_income?: boolean
@@ -330,11 +336,14 @@ export type Database = {
         }
         Update: {
           account_id?: string | null
+          amount?: number | null
           amount_usd?: number
           cadence?: string
           category_id?: string | null
           created_at?: string
+          currency?: string
           day_of_month?: number | null
+          end_date?: string | null
           id?: string
           is_active?: boolean
           is_income?: boolean

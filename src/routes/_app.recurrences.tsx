@@ -6,6 +6,7 @@ import {
   detectRecurrences, saveDetectedRecurrences,
   bulkUpdateRecurrences, bulkDeleteRecurrences,
 } from "@/lib/recurrences.functions";
+import { getLatestUsdBrl } from "@/lib/fx.functions";
 import { formatCurrency } from "@/lib/format";
 import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
@@ -23,9 +24,12 @@ type Form = {
   account_id: string | null;
   category_id: string | null;
   amount_usd: number;
+  amount: number | null;
+  currency: "USD" | "BRL";
   cadence: "weekly" | "biweekly" | "monthly" | "quarterly" | "yearly";
   day_of_month: number | null;
   next_date: string;
+  end_date: string | null;
   is_income: boolean;
   is_active: boolean;
   notes: string;
@@ -34,7 +38,8 @@ type Form = {
 const today = () => new Date().toISOString().slice(0, 10);
 const empty: Form = {
   name: "", merchant_pattern: "", account_id: null, category_id: null,
-  amount_usd: 0, cadence: "monthly", day_of_month: 1, next_date: today(),
+  amount_usd: 0, amount: null, currency: "USD",
+  cadence: "monthly", day_of_month: 1, next_date: today(), end_date: null,
   is_income: false, is_active: true, notes: "",
 };
 
@@ -56,6 +61,9 @@ function RecurrencesPage() {
   const qc = useQueryClient();
 
   const { data } = useQuery({ queryKey: ["recurrences"], queryFn: () => fetchList() });
+  const fetchFx = useServerFn(getLatestUsdBrl);
+  const { data: fx } = useQuery({ queryKey: ["fx-latest"], queryFn: () => fetchFx() });
+  const usdBrl = Number(fx?.rate ?? 0);
   const [form, setForm] = useState<Form | null>(null);
   const [suggestions, setSuggestions] = useState<any[] | null>(null);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -71,7 +79,20 @@ function RecurrencesPage() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
   const save = useMutation({
-    mutationFn: (v: Form) => upsert({ data: { ...v, merchant_pattern: v.merchant_pattern || null, notes: v.notes || null } as any }),
+    mutationFn: (v: Form) => {
+      const amount_usd = v.currency === "BRL" && v.amount != null && usdBrl > 0
+        ? v.amount / usdBrl
+        : (v.amount ?? v.amount_usd);
+      return upsert({ data: {
+        ...v,
+        amount_usd,
+        amount: v.amount,
+        currency: v.currency,
+        end_date: v.end_date || null,
+        merchant_pattern: v.merchant_pattern || null,
+        notes: v.notes || null,
+      } as any });
+    },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["recurrences"] }); setForm(null); },
   });
   const remove = useMutation({
@@ -217,7 +238,10 @@ function RecurrencesPage() {
           onClick={() => setForm({
             id: r.id, name: r.name, merchant_pattern: r.merchant_pattern ?? "",
             account_id: r.account_id, category_id: r.category_id, amount_usd: Number(r.amount_usd),
+            amount: r.amount != null ? Number(r.amount) : Number(r.amount_usd),
+            currency: (r.currency as "USD" | "BRL") ?? "USD",
             cadence: r.cadence, day_of_month: r.day_of_month, next_date: r.next_date,
+            end_date: r.end_date ?? null,
             is_income: r.is_income, is_active: r.is_active, notes: r.notes ?? "",
           })}>
         <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
@@ -435,15 +459,28 @@ function RecurrencesPage() {
             <h2 className="text-lg font-semibold">{form.id ? "Editar recorrência" : "Nova recorrência"}</h2>
             <Input placeholder="Nome (ex: Netflix)" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
             <Input placeholder="Padrão de merchant (opcional)" value={form.merchant_pattern} onChange={(e) => setForm({ ...form, merchant_pattern: e.target.value })} />
-            <div className="grid grid-cols-2 gap-2">
-              <MoneyInput size="lg" showStepper step={10} currency="USD"
-                value={form.amount_usd}
-                onValueChange={(n) => setForm({ ...form, amount_usd: n ?? 0 })} />
+            <div className="grid grid-cols-[1fr_auto_1fr] gap-2 items-end">
+              <MoneyInput size="lg" showStepper step={10} currency={form.currency}
+                value={form.amount ?? form.amount_usd}
+                onValueChange={(n) => setForm({ ...form, amount: n ?? 0, amount_usd: form.currency === "USD" ? (n ?? 0) : form.amount_usd })} />
+              <select value={form.currency}
+                onChange={(e) => setForm({ ...form, currency: e.target.value as "USD" | "BRL" })}
+                className="rounded-md border border-border bg-input px-2 py-2 text-sm h-10">
+                <option value="USD">USD</option>
+                <option value="BRL">BRL</option>
+              </select>
               <select value={form.cadence} onChange={(e) => setForm({ ...form, cadence: e.target.value as any })}
-                      className="rounded-md border border-border bg-input px-3 py-2 text-sm">
+                      className="rounded-md border border-border bg-input px-3 py-2 text-sm h-10">
                 {Object.entries(cadenceLabel).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
               </select>
             </div>
+            {form.currency === "BRL" && (
+              <div className="text-xs text-muted-foreground -mt-1">
+                {usdBrl > 0 && form.amount != null
+                  ? <>≈ {formatCurrency((form.amount ?? 0) / usdBrl)} USD (taxa {usdBrl.toFixed(4)})</>
+                  : "Taxa USD/BRL indisponível — cadastro será feito em USD."}
+              </div>
+            )}
             <div className="grid grid-cols-2 gap-2">
               <select value={form.account_id ?? ""} onChange={(e) => setForm({ ...form, account_id: e.target.value || null })}
                       className="rounded-md border border-border bg-input px-3 py-2 text-sm">
@@ -456,10 +493,14 @@ function RecurrencesPage() {
                 {data?.categories.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
               </select>
             </div>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-3 gap-2">
               <label className="text-xs text-muted-foreground space-y-1">
                 <span>Próxima data</span>
                 <Input type="date" value={form.next_date} onChange={(e) => setForm({ ...form, next_date: e.target.value })} />
+              </label>
+              <label className="text-xs text-muted-foreground space-y-1">
+                <span>Termina em (opcional)</span>
+                <Input type="date" value={form.end_date ?? ""} onChange={(e) => setForm({ ...form, end_date: e.target.value || null })} />
               </label>
               <div className="flex flex-col gap-2 justify-end text-sm">
                 <label className="flex items-center gap-2">
