@@ -89,15 +89,15 @@ function CashflowView({ data, granularity, setGranularity, includeProjections, s
         <div className="h-80">
           <ResponsiveContainer>
             <ComposedChart data={chart} stackOffset="sign">
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-              <XAxis dataKey="label" stroke="hsl(var(--muted-foreground))" fontSize={11} />
-              <YAxis yAxisId="left" stroke="hsl(var(--muted-foreground))" fontSize={11} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-              <YAxis yAxisId="right" orientation="right" stroke="hsl(var(--muted-foreground))" fontSize={11} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
-              <Tooltip contentStyle={{ background: "hsl(var(--card))", border: "1px solid hsl(var(--border))", borderRadius: 8 }}
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+              <XAxis dataKey="label" stroke="var(--muted-foreground)" fontSize={11} />
+              <YAxis yAxisId="left" stroke="var(--muted-foreground)" fontSize={11} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+              <YAxis yAxisId="right" orientation="right" stroke="var(--muted-foreground)" fontSize={11} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+              <Tooltip contentStyle={{ background: "var(--card)", border: "1px solid var(--border)", borderRadius: 8 }}
                 formatter={(v: number, name: string) => [formatCurrency(Math.abs(v)), name]} />
               <ReLegend wrapperStyle={{ fontSize: 11 }} />
-              <Bar yAxisId="left" name="Entradas" dataKey="income" stackId="a" fill="hsl(var(--primary))" radius={[4, 4, 0, 0]} />
-              <Bar yAxisId="left" name="Despesas fixas" dataKey="fixed" stackId="a" fill="hsl(var(--destructive))" />
+              <Bar yAxisId="left" name="Entradas" dataKey="income" stackId="a" fill="var(--primary)" radius={[4, 4, 0, 0]} />
+              <Bar yAxisId="left" name="Despesas fixas" dataKey="fixed" stackId="a" fill="var(--destructive)" />
               <Bar yAxisId="left" name="Variáveis" dataKey="variable" stackId="a" fill="#f59e0b" radius={[0, 0, 4, 4]} />
               <Line yAxisId="right" type="monotone" name="Saldo acumulado" dataKey="cumulative" stroke="#10b981" strokeWidth={2} dot={false} />
             </ComposedChart>
