@@ -730,8 +730,8 @@ function advanceByCadence(d: Date, c: string): Date {
 export const getCashflow = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d) => z.object({
-    granularity: z.enum(["weekly", "monthly", "quarterly"]).default("monthly"),
-    periods: z.number().int().min(2).max(52).default(12),
+    granularity: z.enum(["daily", "weekly", "monthly", "quarterly", "yearly"]).default("monthly"),
+    periods: z.number().int().min(2).max(365).default(12),
   }).parse(d))
   .handler(async ({ data, context }) => {
     const now = new Date();
@@ -739,7 +739,12 @@ export const getCashflow = createServerFn({ method: "POST" })
 
     // Build period buckets starting from current period
     const buckets: { start: Date; end: Date; label: string; days: number }[] = [];
-    if (data.granularity === "weekly") {
+    if (data.granularity === "daily") {
+      for (let i = 0; i < data.periods; i++) {
+        const s = addDaysUTC(today, i);
+        buckets.push({ start: s, end: s, days: 1, label: s.toISOString().slice(5, 10) });
+      }
+    } else if (data.granularity === "weekly") {
       let cur = startOfWeekUTC(today);
       for (let i = 0; i < data.periods; i++) {
         const end = addDaysUTC(cur, 6);
@@ -753,7 +758,7 @@ export const getCashflow = createServerFn({ method: "POST" })
         const days = Math.round((e.getTime() - s.getTime()) / 86400000) + 1;
         buckets.push({ start: s, end: e, days, label: s.toISOString().slice(0, 7) });
       }
-    } else {
+    } else if (data.granularity === "quarterly") {
       // quarterly: anchor to current quarter start
       const qMonth = Math.floor(now.getUTCMonth() / 3) * 3;
       for (let i = 0; i < data.periods; i++) {
@@ -762,6 +767,14 @@ export const getCashflow = createServerFn({ method: "POST" })
         const days = Math.round((e.getTime() - s.getTime()) / 86400000) + 1;
         const q = Math.floor(s.getUTCMonth() / 3) + 1;
         buckets.push({ start: s, end: e, days, label: `${s.getUTCFullYear()} Q${q}` });
+      }
+    } else {
+      // yearly
+      for (let i = 0; i < data.periods; i++) {
+        const s = new Date(Date.UTC(now.getUTCFullYear() + i, 0, 1));
+        const e = new Date(Date.UTC(s.getUTCFullYear(), 11, 31));
+        const days = Math.round((e.getTime() - s.getTime()) / 86400000) + 1;
+        buckets.push({ start: s, end: e, days, label: `${s.getUTCFullYear()}` });
       }
     }
 
