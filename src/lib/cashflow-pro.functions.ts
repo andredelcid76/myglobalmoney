@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { fetchAllPages } from "@/lib/paginated-query";
 
 type Granularity = "weekly" | "monthly" | "quarterly";
 
@@ -75,14 +76,15 @@ export const getCashflowPro = createServerFn({ method: "POST" })
     const horizonStop = buckets[buckets.length - 1].end;
 
     const histStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 3, 1));
-    const [accRes, recsRes, budgetsRes, goalsRes, txRecentRes, allTxRes, ratesRes] = await Promise.all([
+    const todayStr = fmt(today);
+    const [accRes, recsRes, budgetsRes, goalsRes, txRecentRows, allTxRows, ratesRes] = await Promise.all([
       sb.from("accounts").select("*").eq("user_id", userId).eq("is_archived", false),
       sb.from("recurrences").select("*").eq("user_id", userId).eq("is_active", true),
       sb.from("budgets").select("month, amount_usd, budget_type, category_id").eq("user_id", userId),
       sb.from("goals").select("*").eq("user_id", userId).eq("is_archived", false),
-      sb.from("transactions").select("date, amount_usd, account_id, is_transfer")
-        .eq("user_id", userId).gte("date", fmt(histStart)),
-      sb.from("transactions").select("amount_usd, account_id").eq("user_id", userId),
+      fetchAllPages<any>(() => sb.from("transactions").select("date, amount_usd, account_id, is_transfer, is_pending")
+        .eq("user_id", userId).gte("date", fmt(histStart)).lte("date", todayStr)),
+      fetchAllPages<any>(() => sb.from("transactions").select("amount_usd, account_id, date, is_pending").eq("user_id", userId).lte("date", todayStr)),
       sb.from("exchange_rates").select("base, quote, rate, date").order("date", { ascending: false }).limit(200),
     ]);
 
@@ -108,7 +110,8 @@ export const getCashflowPro = createServerFn({ method: "POST" })
     // ---- Per-account opening balance (today)
     const balByAccount = new Map<string, number>();
     for (const a of accounts) balByAccount.set(a.id, Number(a.initial_balance ?? 0));
-    for (const t of allTxRes.data ?? []) {
+    for (const t of allTxRows) {
+      if (t.is_pending) continue;
       const cur = balByAccount.get(t.account_id) ?? 0;
       balByAccount.set(t.account_id, cur + Number(t.amount_usd ?? 0));
     }
@@ -116,7 +119,7 @@ export const getCashflowPro = createServerFn({ method: "POST" })
     for (const a of accounts) startBalances[a.id] = balByAccount.get(a.id) ?? 0;
 
     // ---- Historical daily averages (per all accounts, USD)
-    const hist = (txRecentRes.data ?? []).filter((t) => !t.is_transfer);
+    const hist = txRecentRows.filter((t) => !t.is_transfer && !t.is_pending);
     const histDays = Math.max(1, Math.round((today.getTime() - histStart.getTime()) / 86400000));
     let hIn = 0, hOut = 0;
     for (const t of hist) {

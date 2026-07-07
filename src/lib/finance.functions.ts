@@ -1,23 +1,24 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { fetchAllPages } from "@/lib/paginated-query";
 
 export const getOverview = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d) => z.object({ monthStart: z.string(), monthEnd: z.string() }).parse(d))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    const [accountsRes, txMonthRes, catsRes, allTxRes] = await Promise.all([
+    const [accountsRes, txMonth, catsRes, allTx] = await Promise.all([
       supabase.from("accounts").select("*").eq("user_id", userId).eq("is_archived", false),
-      supabase.from("transactions").select("*").eq("user_id", userId).eq("is_transfer", false).gte("date", data.monthStart).lte("date", data.monthEnd),
+      fetchAllPages<any>(() => supabase.from("transactions").select("*").eq("user_id", userId).eq("is_transfer", false).gte("date", data.monthStart).lte("date", data.monthEnd)),
       supabase.from("categories").select("*").eq("user_id", userId),
-      supabase.from("transactions").select("account_id, amount, currency, amount_usd").eq("user_id", userId),
+      fetchAllPages<any>(() => supabase.from("transactions").select("account_id, amount, currency, amount_usd, date, is_pending").eq("user_id", userId)),
     ]);
     return {
       accounts: accountsRes.data ?? [],
-      monthTx: txMonthRes.data ?? [],
+      monthTx: txMonth,
       categories: catsRes.data ?? [],
-      allTx: allTxRes.data ?? [],
+      allTx,
     };
   });
 
@@ -241,8 +242,8 @@ export const setAccountBalanceToday = createServerFn({ method: "POST" })
     await supabase.from("transactions").delete()
       .eq("user_id", userId).eq("account_id", data.account_id)
       .eq("date", today).eq("merchant", "Ajuste de saldo");
-    const { data: tx } = await supabase.from("transactions")
-      .select("amount,is_pending").eq("user_id", userId).eq("account_id", data.account_id).lte("date", today);
+    const tx = await fetchAllPages<any>(() => supabase.from("transactions")
+      .select("amount,is_pending").eq("user_id", userId).eq("account_id", data.account_id).lte("date", today));
     const current = Number(acc.initial_balance) + (tx ?? [])
       .filter((t: any) => !t.is_pending)
       .reduce((s, t: any) => s + Number(t.amount ?? 0), 0);
@@ -339,8 +340,8 @@ export const listAccounts = createServerFn({ method: "POST" })
     const { data, error } = await context.supabase.from("accounts").select("*").eq("user_id", context.userId).order("created_at");
     if (error) throw new Error(error.message);
     const today = new Date().toISOString().slice(0, 10);
-    const { data: tx } = await context.supabase.from("transactions")
-      .select("account_id, amount, is_pending").eq("user_id", context.userId).lte("date", today);
+    const tx = await fetchAllPages<any>(() => context.supabase.from("transactions")
+      .select("account_id, amount, is_pending").eq("user_id", context.userId).lte("date", today));
     const sumByAcc = new Map<string, number>();
     for (const t of tx ?? []) {
       if ((t as any).is_pending) continue;
@@ -423,10 +424,10 @@ export const listBudgets = createServerFn({ method: "POST" })
     const [budgets, categories, tx] = await Promise.all([
       context.supabase.from("budgets").select("*").eq("user_id", context.userId).eq("month", data.month),
       context.supabase.from("categories").select("*").eq("user_id", context.userId),
-      context.supabase.from("transactions").select("category_id, amount_usd").eq("user_id", context.userId).eq("is_transfer", false)
-        .gte("date", data.month).lte("date", endOfMonth(data.month)),
+      fetchAllPages<any>(() => context.supabase.from("transactions").select("category_id, amount_usd, is_pending").eq("user_id", context.userId).eq("is_transfer", false)
+        .gte("date", data.month).lte("date", endOfMonth(data.month))),
     ]);
-    return { budgets: budgets.data ?? [], categories: categories.data ?? [], monthTx: tx.data ?? [] };
+    return { budgets: budgets.data ?? [], categories: categories.data ?? [], monthTx: tx.filter((t: any) => !t.is_pending) };
   });
 
 export const upsertBudget = createServerFn({ method: "POST" })
@@ -474,12 +475,12 @@ export const getBudgetSuggestions = createServerFn({ method: "POST" })
     const now = new Date();
     const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - data.months, 1));
     const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0));
-    const [txRes, catsRes] = await Promise.all([
-      context.supabase.from("transactions")
+    const [txRows, catsRes] = await Promise.all([
+      fetchAllPages<any>(() => context.supabase.from("transactions")
         .select("category_id, amount_usd, date")
         .eq("user_id", context.userId).eq("is_transfer", false)
         .gte("date", start.toISOString().slice(0, 10))
-        .lte("date", end.toISOString().slice(0, 10)),
+        .lte("date", end.toISOString().slice(0, 10))),
       context.supabase.from("categories").select("id, parent_id").eq("user_id", context.userId),
     ]);
     const cats = catsRes.data ?? [];
@@ -488,7 +489,7 @@ export const getBudgetSuggestions = createServerFn({ method: "POST" })
 
     // monthly[catId][monthKey] = spent
     const monthly = new Map<string, Map<string, number>>();
-    for (const t of txRes.data ?? []) {
+    for (const t of txRows) {
       const amt = Number(t.amount_usd);
       if (amt >= 0 || !t.category_id) continue;
       const spent = -amt;
@@ -600,11 +601,11 @@ export const listBudgetsYear = createServerFn({ method: "POST" })
       context.supabase.from("budgets").select("*").eq("user_id", context.userId)
         .gte("month", start).lte("month", end),
       context.supabase.from("categories").select("*").eq("user_id", context.userId),
-      context.supabase.from("transactions").select("category_id, amount_usd, date")
+      fetchAllPages<any>(() => context.supabase.from("transactions").select("category_id, amount_usd, date, is_pending")
         .eq("user_id", context.userId).eq("is_transfer", false)
-        .gte("date", start).lte("date", end),
+        .gte("date", start).lte("date", end)),
     ]);
-    return { budgets: budgets.data ?? [], categories: categories.data ?? [], tx: tx.data ?? [] };
+    return { budgets: budgets.data ?? [], categories: categories.data ?? [], tx: tx.filter((t: any) => !t.is_pending) };
   });
 
 // ---------- Projections ----------
@@ -621,18 +622,18 @@ export const getProjections = createServerFn({ method: "POST" })
     const now = new Date();
     const startHist = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 5, 1));
     const startStr = startHist.toISOString().slice(0, 10);
-    const [txRes, accountsRes, recsRes, budgetsRes] = await Promise.all([
-      context.supabase.from("transactions").select("date, amount_usd").eq("user_id", context.userId).eq("is_transfer", false).gte("date", startStr),
+    const [tx, accountsRes, recsRes, budgetsRes] = await Promise.all([
+      fetchAllPages<any>(() => context.supabase.from("transactions").select("date, amount_usd, is_pending").eq("user_id", context.userId).eq("is_transfer", false).gte("date", startStr)),
       context.supabase.from("accounts").select("currency, initial_balance").eq("user_id", context.userId).eq("is_archived", false),
       context.supabase.from("recurrences").select("amount_usd, cadence, is_income, is_active, next_date").eq("user_id", context.userId).eq("is_active", true),
       context.supabase.from("budgets").select("month, amount_usd, budget_type").eq("user_id", context.userId),
     ]);
-    const tx = txRes.data ?? [];
+    const confirmedTx = tx.filter((t: any) => !t.is_pending);
     const recs = recsRes.data ?? [];
     const budgets = budgetsRes.data ?? [];
     // Group historical tx by month
     const byMonth = new Map<string, { income: number; expense: number }>();
-    for (const t of tx) {
+    for (const t of confirmedTx) {
       const key = (t.date as string).slice(0, 7);
       const v = byMonth.get(key) ?? { income: 0, expense: 0 };
       const amt = Number(t.amount_usd);
@@ -650,10 +651,10 @@ export const getProjections = createServerFn({ method: "POST" })
 
     // Current net worth in USD (initial balances + sum of all amount_usd)
     const initial = (accountsRes.data ?? []).reduce((s, a) => s + Number(a.initial_balance ?? 0), 0);
-    const totalTx = tx.reduce((s, t) => s + Number(t.amount_usd ?? 0), 0);
+    const totalTx = confirmedTx.reduce((s, t) => s + Number(t.amount_usd ?? 0), 0);
     // include older tx too
-    const { data: older } = await context.supabase.from("transactions").select("amount_usd").eq("user_id", context.userId).lt("date", startStr);
-    const olderSum = (older ?? []).reduce((s, t) => s + Number(t.amount_usd ?? 0), 0);
+    const older = await fetchAllPages<any>(() => context.supabase.from("transactions").select("amount_usd, is_pending").eq("user_id", context.userId).lt("date", startStr));
+    const olderSum = (older ?? []).filter((t: any) => !t.is_pending).reduce((s, t) => s + Number(t.amount_usd ?? 0), 0);
     const currentNet = initial + totalTx + olderSum;
 
     const history = histKeys.map((k) => ({
@@ -788,18 +789,18 @@ export const getCashflow = createServerFn({ method: "POST" })
     const todayStr0 = today.toISOString().slice(0, 10);
     const horizonEndStr = horizonEnd.toISOString().slice(0, 10);
 
-    const [txRes, accRes, recsRes, budgetsRes, allTxRes, futureTxRes] = await Promise.all([
-      context.supabase.from("transactions").select("date, amount_usd, category_id, is_pending").eq("user_id", context.userId).eq("is_transfer", false).gte("date", histStartStr).lte("date", todayStr0),
+    const [txRows, accRes, recsRes, budgetsRes, allTxRows, futureTxRows] = await Promise.all([
+      fetchAllPages<any>(() => context.supabase.from("transactions").select("date, amount_usd, category_id, is_pending").eq("user_id", context.userId).eq("is_transfer", false).gte("date", histStartStr).lte("date", todayStr0)),
       context.supabase.from("accounts").select("initial_balance").eq("user_id", context.userId).eq("is_archived", false),
       context.supabase.from("recurrences").select("name, amount_usd, cadence, is_income, next_date, is_active").eq("user_id", context.userId).eq("is_active", true),
       context.supabase.from("budgets").select("month, amount_usd, budget_type"),
-      context.supabase.from("transactions").select("amount_usd, is_pending, date").eq("user_id", context.userId),
-      context.supabase.from("transactions").select("date, amount_usd, is_pending, is_transfer").eq("user_id", context.userId).gt("date", todayStr0).lte("date", horizonEndStr),
+      fetchAllPages<any>(() => context.supabase.from("transactions").select("amount_usd, is_pending, date").eq("user_id", context.userId)),
+      fetchAllPages<any>(() => context.supabase.from("transactions").select("date, amount_usd, is_pending, is_transfer").eq("user_id", context.userId).gt("date", todayStr0).lte("date", horizonEndStr)),
     ]);
-    const hist = (txRes.data ?? []).filter((t: any) => !t.is_pending);
+    const hist = txRows.filter((t: any) => !t.is_pending);
     const recs = recsRes.data ?? [];
     const budgets = (budgetsRes.data ?? []).filter((b: any) => true);
-    const futureTx = (futureTxRes.data ?? []).filter((t: any) => data.includeProjections ? true : !t.is_pending);
+    const futureTx = futureTxRows.filter((t: any) => data.includeProjections ? true : !t.is_pending);
 
     // Historical daily average expense (last 3 closed months)
     const histDays = Math.max(1, Math.round((today.getTime() - histStart.getTime()) / 86400000));
@@ -813,7 +814,7 @@ export const getCashflow = createServerFn({ method: "POST" })
 
     // Current net worth (USD): initial balances + sum of confirmed tx up to today
     const initial = (accRes.data ?? []).reduce((s, a) => s + Number(a.initial_balance ?? 0), 0);
-    const allTxSum = (allTxRes.data ?? [])
+    const allTxSum = allTxRows
       .filter((t: any) => !t.is_pending && (t.date as string) <= todayStr0)
       .reduce((s: number, t: any) => s + Number(t.amount_usd ?? 0), 0);
     const currentNet = initial + allTxSum;

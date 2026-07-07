@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { fetchAllPages } from "@/lib/paginated-query";
 
 type Granularity = "daily" | "weekly" | "monthly";
 
@@ -71,20 +72,22 @@ export const getLedgerView = createServerFn({ method: "POST" })
   }).parse(d))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    const [accRes, txInRes, txBeforeRes, recRes, budgetsRes, catsRes] = await Promise.all([
+    const txInQuery = () => {
+      let q = supabase.from("transactions").select("id,date,merchant,amount,amount_usd,currency,category_id,account_id,is_transfer,is_pending,notes")
+        .eq("user_id", userId).gte("date", data.from).lte("date", data.to).order("date");
+      if (data.accountId) q = q.eq("account_id", data.accountId);
+      return q;
+    };
+    const txBeforeQuery = () => {
+      let q = supabase.from("transactions").select("date,amount,amount_usd,account_id,is_transfer,is_pending")
+        .eq("user_id", userId).lt("date", data.from);
+      if (data.accountId) q = q.eq("account_id", data.accountId);
+      return q;
+    };
+    const [accRes, txInRows, txBeforeRows, recRes, budgetsRes, catsRes] = await Promise.all([
       supabase.from("accounts").select("id,name,currency,initial_balance,color").eq("user_id", userId),
-      (() => {
-        let q = supabase.from("transactions").select("id,date,merchant,amount,amount_usd,currency,category_id,account_id,is_transfer,notes")
-          .eq("user_id", userId).gte("date", data.from).lte("date", data.to).order("date");
-        if (data.accountId) q = q.eq("account_id", data.accountId);
-        return q;
-      })(),
-      (() => {
-        let q = supabase.from("transactions").select("amount,amount_usd,account_id")
-          .eq("user_id", userId).lt("date", data.from);
-        if (data.accountId) q = q.eq("account_id", data.accountId);
-        return q;
-      })(),
+      fetchAllPages<any>(txInQuery),
+      fetchAllPages<any>(txBeforeQuery),
       supabase.from("recurrences").select("*").eq("user_id", userId).eq("is_active", true),
       supabase.from("budgets").select("month,amount_usd,budget_type,category_id").eq("user_id", userId),
       supabase.from("categories").select("id,name,color,parent_id,is_income,budget_group").eq("user_id", userId),
@@ -99,10 +102,10 @@ export const getLedgerView = createServerFn({ method: "POST" })
     let opening = 0;
     if (useUsd) {
       opening = accounts.reduce((s, a) => s + Number(a.initial_balance ?? 0), 0);
-      for (const t of txBeforeRes.data ?? []) opening += Number(t.amount_usd ?? 0);
+      for (const t of txBeforeRows) if (!t.is_pending) opening += Number(t.amount_usd ?? 0);
     } else if (account) {
       opening = Number(account.initial_balance ?? 0);
-      for (const t of txBeforeRes.data ?? []) opening += Number(t.amount ?? 0);
+      for (const t of txBeforeRows) if (!t.is_pending) opening += Number(t.amount ?? 0);
     }
 
     const cats = (catsRes.data ?? []) as any[];
@@ -127,7 +130,7 @@ export const getLedgerView = createServerFn({ method: "POST" })
     const accCurMap = new Map<string, string>(accounts.map((a) => [a.id as string, (a.currency as string) ?? "USD"]));
 
     const realTxByMonth = new Map<string, { merchant: string; cat: string | null }[]>();
-    for (const t of txInRes.data ?? []) {
+    for (const t of txInRows) {
       const amt = useUsd ? Number(t.amount_usd) : Number(t.amount);
       const isFuture = (t.date as string) > todayStr;
       entriesRaw.push({
@@ -229,7 +232,7 @@ export const getLedgerView = createServerFn({ method: "POST" })
       const budgets = (budgetsRes.data ?? []) as any[];
       // Sum real expense by (category_id, month) for current view
       const realExpByCatMonth = new Map<string, number>(); // key = cat|month
-      for (const t of txInRes.data ?? []) {
+      for (const t of txInRows) {
         if ((t as any).is_transfer) continue;
         const amt = useUsd ? Number(t.amount_usd) : Number(t.amount);
         if (amt >= 0) continue;
@@ -293,11 +296,12 @@ export const getLedgerView = createServerFn({ method: "POST" })
         const balByAcc = new Map<string, number>();
         for (const a of accounts) balByAcc.set(a.id, Number(a.initial_balance ?? 0));
         // For CC balance we need ALL tx (including transfers/payments). Re-fetch only CC tx ids? simpler: use txBeforeRes + txInRes (which already include transfers — the .eq("is_transfer",false) is NOT applied here).
-        for (const t of txBeforeRes.data ?? []) {
+        for (const t of txBeforeRows) {
+          if ((t as any).is_pending) continue;
           balByAcc.set((t as any).account_id, (balByAcc.get((t as any).account_id) ?? 0) + Number((t as any).amount_usd ?? 0));
         }
-        for (const t of txInRes.data ?? []) {
-          if ((t.date as string) <= todayStr) {
+        for (const t of txInRows) {
+          if (!(t as any).is_pending && (t.date as string) <= todayStr) {
             balByAcc.set(t.account_id as string, (balByAcc.get(t.account_id as string) ?? 0) + Number(t.amount_usd ?? 0));
           }
         }
@@ -326,15 +330,15 @@ export const getLedgerView = createServerFn({ method: "POST" })
         // Sum of non-transfer tx within [start,close] for an account (in USD), using both before+within slices
         function sumWindow(accId: string, startStr: string, closeStr: string) {
           let s = 0;
-          for (const t of txBeforeRes.data ?? []) {
+          for (const t of txBeforeRows) {
             const tt = t as any;
-            if (tt.account_id !== accId || tt.is_transfer) continue;
+            if (tt.account_id !== accId || tt.is_transfer || tt.is_pending) continue;
             const d = tt.date as string;
             if (d >= startStr && d <= closeStr) s += Math.abs(Number(tt.amount_usd ?? 0));
           }
-          for (const t of txInRes.data ?? []) {
+          for (const t of txInRows) {
             const tt = t as any;
-            if (tt.account_id !== accId || tt.is_transfer) continue;
+            if (tt.account_id !== accId || tt.is_transfer || tt.is_pending) continue;
             const d = tt.date as string;
             if (d >= startStr && d <= closeStr) s += Math.abs(Number(tt.amount_usd ?? 0));
           }
