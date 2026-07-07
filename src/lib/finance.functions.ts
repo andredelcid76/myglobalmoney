@@ -783,7 +783,7 @@ export const getCashflow = createServerFn({ method: "POST" })
     const histStartStr = histStart.toISOString().slice(0, 10);
 
     const [txRes, accRes, recsRes, budgetsRes, allTxRes] = await Promise.all([
-      context.supabase.from("transactions").select("date, amount_usd").eq("user_id", context.userId).eq("is_transfer", false).gte("date", histStartStr),
+      context.supabase.from("transactions").select("date, amount_usd, category_id").eq("user_id", context.userId).eq("is_transfer", false).gte("date", histStartStr),
       context.supabase.from("accounts").select("initial_balance").eq("user_id", context.userId).eq("is_archived", false),
       context.supabase.from("recurrences").select("name, amount_usd, cadence, is_income, next_date, is_active").eq("user_id", context.userId).eq("is_active", true),
       context.supabase.from("budgets").select("month, amount_usd, budget_type"),
@@ -843,13 +843,29 @@ export const getCashflow = createServerFn({ method: "POST" })
       }
     }
 
+    // Realized variable expenses per month (up to today), from historical tx
+    const realizedVariableByMonth = new Map<string, number>();
+    const todayStr = today.toISOString().slice(0, 10);
+    for (const t of hist) {
+      const amt = Number(t.amount_usd);
+      if (amt >= 0) continue;
+      const ds = t.date as string;
+      if (ds > todayStr) continue;
+      const mk = ds.slice(0, 7);
+      realizedVariableByMonth.set(mk, (realizedVariableByMonth.get(mk) ?? 0) + -amt);
+    }
+
     let cumulative = currentNet;
     const series = buckets.map((b) => {
       const inOcc = occurrences.filter((o) => o.date >= b.start && o.date <= b.end);
       const recIncome = inOcc.filter((o) => o.isIncome).reduce((s, o) => s + o.amount, 0);
       const recExpense = inOcc.filter((o) => !o.isIncome).reduce((s, o) => s + o.amount, 0);
 
-      // Apportion budgets across overlap (for weekly buckets, slice month by days)
+      // Apportion budgets across overlap (for weekly buckets, slice month by days).
+      // Variable budget: distribute the *remaining* budget of each month
+      // (max(0, monthly - realized-so-far)) across the *remaining* days of the
+      // month (from today onward). Days that already elapsed contribute 0 to
+      // the forward projection since they show up in real transactions.
       let budgetFixed = 0;
       let budgetVariable = 0;
       // iterate months that overlap this bucket
@@ -862,7 +878,22 @@ export const getCashflow = createServerFn({ method: "POST" })
         const monthDays = Math.round((mEnd.getTime() - monthCursor.getTime()) / 86400000) + 1;
         const mk = monthCursor.toISOString().slice(0, 7);
         budgetFixed += (fixedByMonth.get(mk) ?? 0) * (overlapDays / monthDays);
-        budgetVariable += (variableBudgetByMonth.get(mk) ?? 0) * (overlapDays / monthDays);
+
+        // Variable: only project the portion of the overlap that is today-or-later.
+        const futureStart = today > overlapStart ? today : overlapStart;
+        const futureDaysInOverlap = overlapEnd >= futureStart
+          ? Math.round((overlapEnd.getTime() - futureStart.getTime()) / 86400000) + 1
+          : 0;
+        const futureMonthStart = today > monthCursor ? today : monthCursor;
+        const remainingMonthDays = mEnd >= futureMonthStart
+          ? Math.round((mEnd.getTime() - futureMonthStart.getTime()) / 86400000) + 1
+          : 0;
+        const monthlyBudget = variableBudgetByMonth.get(mk) ?? 0;
+        const realized = realizedVariableByMonth.get(mk) ?? 0;
+        const remainingBudget = Math.max(0, monthlyBudget - realized);
+        if (remainingMonthDays > 0 && futureDaysInOverlap > 0) {
+          budgetVariable += remainingBudget * (futureDaysInOverlap / remainingMonthDays);
+        }
         monthCursor.setUTCMonth(monthCursor.getUTCMonth() + 1);
       }
 
