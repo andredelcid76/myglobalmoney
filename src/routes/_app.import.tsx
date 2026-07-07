@@ -97,6 +97,9 @@ function ImportPage() {
         try { const { rate } = await fxFn({ data: { date: d } }); fxCache.set(d, rate); }
         catch { throw new Error(`Sem cotação USD/BRL para ${d} — importação cancelada, tente novamente mais tarde`); }
       }
+      // external_id determinístico: reimportar o mesmo CSV não duplica
+      // (índice único no banco); #n diferencia linhas idênticas legítimas
+      const seenKeys = new Map<string, number>();
       const prepared = rows
         .filter((r) => mapping[r.account])
         .map((r) => {
@@ -107,7 +110,11 @@ function ImportPage() {
             if (cached == null) throw new Error(`Sem cotação USD/BRL para ${r.date} — importação cancelada`);
             rate = cached; amtUsd = r.amount / rate;
           }
+          const baseKey = `monarch:${r.date}:${r.merchant.toLowerCase().replace(/[^a-z0-9]/g, "").slice(0, 32)}:${Math.abs(r.amount).toFixed(2)}`;
+          const n = seenKeys.get(baseKey) ?? 0;
+          seenKeys.set(baseKey, n + 1);
           return {
+            external_id: n === 0 ? baseKey : `${baseKey}#${n}`,
             date: r.date, merchant: r.merchant,
             original_statement: r.original_statement || null,
             notes: r.notes || null,

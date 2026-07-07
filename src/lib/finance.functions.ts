@@ -305,11 +305,12 @@ const TxImport = z.object({
   amount: z.number(),
   currency: z.string().default("USD"),
   amount_usd: z.number(),
-  exchange_rate: z.number().nullable().optional(),
+  exchange_rate: z.number().nullable().optional(), // convenção: moeda nativa → USD
   account_id: z.string().uuid(),
   category_id: z.string().uuid().nullable().optional(),
   is_transfer: z.boolean().default(false),
   tags: z.array(z.string()).optional().nullable(),
+  external_id: z.string().max(200).optional().nullable(),
 });
 
 export const importTransactions = createServerFn({ method: "POST" })
@@ -318,13 +319,15 @@ export const importTransactions = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     if (data.rows.length === 0) return { inserted: 0 };
     const rows = data.rows.map((r) => ({ ...r, user_id: context.userId }));
-    // chunk insert
+    // chunk insert; linhas com external_id repetido na mesma conta são ignoradas
+    // (índice único transactions_user_acct_ext_uniq protege contra retry/duplo clique)
     let inserted = 0;
     for (let i = 0; i < rows.length; i += 500) {
       const chunk = rows.slice(i, i + 500);
-      const { error, count } = await context.supabase.from("transactions").insert(chunk, { count: "exact" });
+      const { error, count } = await context.supabase.from("transactions")
+        .upsert(chunk, { onConflict: "user_id,account_id,external_id", ignoreDuplicates: true, count: "exact" });
       if (error) throw new Error(error.message);
-      inserted += count ?? chunk.length;
+      inserted += count ?? 0;
     }
     return { inserted };
   });

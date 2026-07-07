@@ -287,10 +287,18 @@ export function NubankImport() {
     setBusy(true);
     try {
       setProgress("Importando transações...");
+      // external_id determinístico: reimportar o mesmo CSV não duplica nada
+      // (índice único no banco ignora linhas repetidas). O sufixo #n diferencia
+      // compras idênticas legítimas (mesma data/estabelecimento/valor).
+      const seenKeys = new Map<string, number>();
       const rows = preview.newTx.map((t) => {
         const rate = preview.totalUsdCache.get(t.date);
         if (!rate) throw new Error(`Sem cotação USD/BRL para ${t.date} — gere o preview novamente`);
+        const baseKey = `nubank:${t.date}:${normalizeMerchant(t.original_statement).slice(0, 32)}:${Math.abs(t.amount).toFixed(2)}`;
+        const n = seenKeys.get(baseKey) ?? 0;
+        seenKeys.set(baseKey, n + 1);
         return {
+          external_id: n === 0 ? baseKey : `${baseKey}#${n}`,
           date: t.date,
           merchant: t.merchant,
           original_statement: t.original_statement || null,
@@ -311,6 +319,7 @@ export function NubankImport() {
         const rate = preview.totalUsdCache.get(preview.lastDate);
         if (!rate) throw new Error(`Sem cotação USD/BRL para ${preview.lastDate} — gere o preview novamente`);
         rows.push({
+          external_id: `nubank:iof:${preview.lastDate}`,
           date: preview.lastDate,
           merchant: "IOF — Imposto s/ Operações Financeiras",
           original_statement: `IOF consolidado (${preview.iofNet < 0 ? "líquido" : "estorno líquido"})`,
