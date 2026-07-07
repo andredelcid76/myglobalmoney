@@ -8,17 +8,18 @@ export const getOverview = createServerFn({ method: "POST" })
   .inputValidator((d) => z.object({ monthStart: z.string(), monthEnd: z.string() }).parse(d))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
+    const today = new Date().toISOString().slice(0, 10);
     const [accountsRes, txMonth, catsRes, allTx] = await Promise.all([
       supabase.from("accounts").select("*").eq("user_id", userId).eq("is_archived", false),
       fetchAllPages<any>(() => supabase.from("transactions").select("*").eq("user_id", userId).eq("is_transfer", false).gte("date", data.monthStart).lte("date", data.monthEnd)),
       supabase.from("categories").select("*").eq("user_id", userId),
-      fetchAllPages<any>(() => supabase.from("transactions").select("account_id, amount, currency, amount_usd, date, is_pending").eq("user_id", userId)),
+      fetchAllPages<any>(() => supabase.from("transactions").select("account_id, amount, currency, amount_usd, date, is_pending").eq("user_id", userId).lte("date", today)),
     ]);
     return {
       accounts: accountsRes.data ?? [],
-      monthTx: txMonth,
+      monthTx: txMonth.filter((t: any) => !t.is_pending),
       categories: catsRes.data ?? [],
-      allTx,
+      allTx: allTx.filter((t: any) => !t.is_pending),
     };
   });
 
@@ -477,7 +478,7 @@ export const getBudgetSuggestions = createServerFn({ method: "POST" })
     const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0));
     const [txRows, catsRes] = await Promise.all([
       fetchAllPages<any>(() => context.supabase.from("transactions")
-        .select("category_id, amount_usd, date")
+        .select("category_id, amount_usd, date, is_pending")
         .eq("user_id", context.userId).eq("is_transfer", false)
         .gte("date", start.toISOString().slice(0, 10))
         .lte("date", end.toISOString().slice(0, 10))),
@@ -490,6 +491,7 @@ export const getBudgetSuggestions = createServerFn({ method: "POST" })
     // monthly[catId][monthKey] = spent
     const monthly = new Map<string, Map<string, number>>();
     for (const t of txRows) {
+      if (t.is_pending) continue;
       const amt = Number(t.amount_usd);
       if (amt >= 0 || !t.category_id) continue;
       const spent = -amt;
