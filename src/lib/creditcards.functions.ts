@@ -79,10 +79,11 @@ export const getCreditCardStatements = createServerFn({ method: "POST" })
       const balance = Number(a.initial_balance || 0) + confirmedCardTx.reduce((s: number, t: any) => s + nat(t), 0);
       const totalOwed = Math.max(0, -balance);
 
-      // Último pagamento: lançamento confirmado mais recente com valor positivo
-      // (pagamento ou estorno abatendo a fatura).
+      // Último pagamento: transferência recebida mais recente (pagamento de
+      // fatura). Exclui "Ajuste de saldo" (calibração, não pagamento) e
+      // estornos de compra (que não são transferência).
       const lastPaymentTx = confirmedCardTx
-        .filter((t: any) => nat(t) > 0)
+        .filter((t: any) => nat(t) > 0 && t.is_transfer && t.merchant !== "Ajuste de saldo")
         .sort((x: any, y: any) => (y.date as string).localeCompare(x.date as string))[0];
       const lastPayment = lastPaymentTx ? { date: lastPaymentTx.date as string, amount: nat(lastPaymentTx) } : null;
 
