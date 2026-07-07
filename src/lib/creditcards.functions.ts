@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { fetchAllPages } from "@/lib/paginated-query";
 
 // Compute the statement (fatura) period containing `today` for a card with
 // the given closing day. The period runs from the day AFTER the previous
@@ -55,24 +56,24 @@ export const getCreditCardStatements = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const { supabase, userId } = context;
-    const [accRes, txRes] = await Promise.all([
+    const [accRes, allTx] = await Promise.all([
       supabase.from("accounts").select("*").eq("user_id", userId).eq("type", "credit_card").eq("is_archived", false),
-      supabase.from("transactions").select("*").eq("user_id", userId),
+      fetchAllPages<any>(() => supabase.from("transactions").select("*").eq("user_id", userId)),
     ]);
     if (accRes.error) throw new Error(accRes.error.message);
-    if (txRes.error) throw new Error(txRes.error.message);
 
     const accounts = accRes.data ?? [];
-    const allTx = txRes.data ?? [];
     const today = new Date();
+    const todayStr = ymd(today);
 
     const cards = accounts.map((a: any) => {
       const closing = a.closing_day ?? null;
       const due = a.due_day ?? null;
       const allCardTx = allTx.filter((t: any) => t.account_id === a.id);
-      const cardTx = allCardTx.filter((t: any) => !t.is_transfer);
+      const confirmedCardTx = allCardTx.filter((t: any) => !t.is_pending && t.date <= todayStr);
+      const cardTx = allCardTx.filter((t: any) => !t.is_transfer && !t.is_pending);
       // total owed today (includes payments / transfers reducing the debt)
-      const balance = Number(a.initial_balance || 0) + allCardTx.reduce((s: number, t: any) => s + Number(t.amount_usd || 0), 0);
+      const balance = Number(a.initial_balance || 0) + confirmedCardTx.reduce((s: number, t: any) => s + Number(t.amount_usd || 0), 0);
       const totalOwed = Math.max(0, -balance);
 
       if (!closing || !due) {
@@ -123,7 +124,6 @@ export const getCreditCardStatements = createServerFn({ method: "POST" })
       const closedUnpaidUsd = Math.max(0, totalOwed - stCur.totalUsd);
       stPrev.totalUsd = Math.max(stPrev.totalUsd, closedUnpaidUsd);
 
-      const todayStr = ymd(today);
       const hasClosed = closedUnpaidUsd > 0.005 && stPrev.due >= todayStr;
       const utilization = a.credit_limit_usd ? (stCur.totalUsd + closedUnpaidUsd) / Number(a.credit_limit_usd) : null;
 

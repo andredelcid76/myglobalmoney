@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { fetchAllPages } from "@/lib/paginated-query";
 
 function endOfMonthStr(monthStart: string) {
   const d = new Date(monthStart + "T00:00:00Z");
@@ -28,16 +29,16 @@ export const getBudgetMonthlyPro = createServerFn({ method: "POST" })
     const prev = prevMonth(data.month);
     const prevEnd = endOfMonthStr(prev);
 
-    const [catsRes, budgetsRes, prevBudgetsRes, txRes, prevTxRes] = await Promise.all([
+    const [catsRes, budgetsRes, prevBudgetsRes, txRows, prevTxRows] = await Promise.all([
       sb.from("categories").select("*").eq("user_id", context.userId),
       sb.from("budgets").select("*").eq("user_id", context.userId).eq("month", data.month),
       sb.from("budgets").select("*").eq("user_id", context.userId).eq("month", prev),
-      sb.from("transactions").select("category_id, amount_usd, date")
+      fetchAllPages<any>(() => sb.from("transactions").select("category_id, amount_usd, date, is_pending")
         .eq("user_id", context.userId).eq("is_transfer", false)
-        .gte("date", data.month).lte("date", monthEnd),
-      sb.from("transactions").select("category_id, amount_usd, date")
+        .gte("date", data.month).lte("date", monthEnd)),
+      fetchAllPages<any>(() => sb.from("transactions").select("category_id, amount_usd, date, is_pending")
         .eq("user_id", context.userId).eq("is_transfer", false)
-        .gte("date", prev).lte("date", prevEnd),
+        .gte("date", prev).lte("date", prevEnd)),
     ]);
 
     const cats = (catsRes.data ?? []) as any[];
@@ -63,8 +64,8 @@ export const getBudgetMonthlyPro = createServerFn({ method: "POST" })
       }
       return m;
     }
-    const spent = spentMap(txRes.data ?? []);
-    const prevSpent = spentMap(prevTxRes.data ?? []);
+    const spent = spentMap(txRows.filter((t: any) => !t.is_pending));
+    const prevSpent = spentMap(prevTxRows.filter((t: any) => !t.is_pending));
 
     // Budgets by category
     const budgetByCat = new Map<string, any>();
