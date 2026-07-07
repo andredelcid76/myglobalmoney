@@ -44,6 +44,7 @@ function CardsPage() {
 function CardItem({ card }: { card: any }) {
   const [expanded, setExpanded] = useState<number | null>(1); // current open by default
   const a = card.account;
+  const cur = (card.currency as string) ?? a.currency ?? "USD";
   const navigate = useNavigate();
   const openEdit = () => navigate({ to: "/accounts", hash: `edit-${a.id}` });
 
@@ -77,19 +78,16 @@ function CardItem({ card }: { card: any }) {
         </div>
 
         {card.configured ? (
+          <>
           <div className="mt-4 grid grid-cols-3 gap-3 text-xs">
             <div>
-              <div className="text-muted-foreground">
-                {card.closedUnpaidUsd > 0.005 ? "Fatura fechada" : "Fatura em aberto"}
-              </div>
+              <div className="text-muted-foreground">Total devido</div>
               <div className="text-lg font-semibold tabular-nums">
-                {formatCurrency(card.closedUnpaidUsd > 0.005 ? card.closedUnpaidUsd : card.currentTotalUsd)}
+                {formatCurrency(card.totalOwed, cur)}
               </div>
-              {card.closedUnpaidUsd > 0.005 && (
-                <div className="text-[10px] text-muted-foreground">
-                  + em aberto: {formatCurrency(card.currentTotalUsd)}
-                </div>
-              )}
+              <div className="text-[10px] text-muted-foreground">
+                fechada {formatCurrency(card.closedUnpaid, cur)} · aberto {formatCurrency(card.currentTotal, cur)}
+              </div>
             </div>
             <div>
               <div className="text-muted-foreground">
@@ -107,9 +105,9 @@ function CardItem({ card }: { card: any }) {
             </div>
             <div>
               <div className="text-muted-foreground">Limite</div>
-              {a.credit_limit_usd ? (
+              {card.limit ? (
                 <>
-                  <div className="font-semibold tabular-nums">{formatCurrency(Number(a.credit_limit_usd))}</div>
+                  <div className="font-semibold tabular-nums">{formatCurrency(card.limit, cur)}</div>
                   {card.utilization !== null && (
                     <Progress value={Math.min(100, card.utilization * 100)} className="h-1 mt-1" />
                   )}
@@ -119,6 +117,12 @@ function CardItem({ card }: { card: any }) {
               )}
             </div>
           </div>
+          {card.lastPayment && (
+            <div className="mt-3 text-[11px] text-muted-foreground">
+              Último pagamento: <span className="font-medium text-foreground">{formatCurrency(card.lastPayment.amount, cur)}</span> em {formatDate(card.lastPayment.date)}
+            </div>
+          )}
+          </>
         ) : (
           <div className="mt-3 text-xs text-muted-foreground">
             Defina dia de fechamento, vencimento e (opcional) limite para habilitar a gestão de fatura.
@@ -144,7 +148,7 @@ function CardItem({ card }: { card: any }) {
                     </div>
                   </div>
                   <div className="text-right">
-                    <div className="text-sm font-semibold tabular-nums">{formatCurrency(s.totalUsd)}</div>
+                    <div className="text-sm font-semibold tabular-nums">{formatCurrency(s.total, cur)}</div>
                     <div className="text-[10px] text-muted-foreground">{s.count} lançamentos</div>
                   </div>
                 </button>

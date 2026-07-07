@@ -1,13 +1,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { fetchAllPages } from "@/lib/paginated-query";
-import { getLatestUsdBrlRate, initialBalanceUsd } from "@/lib/fx-helpers";
 import { todayUTCDate, addMonthsClamped } from "@/lib/dates";
 
 // Compute the statement (fatura) period containing `today` for a card with
 // the given closing day. The period runs from the day AFTER the previous
 // closing to the closing date itself. Due date falls on the next due_day
-// after closing.
+// after closing. All math in UTC.
 function buildStatement(today: Date, closingDay: number, dueDay: number) {
   const y = today.getUTCFullYear();
   const m = today.getUTCMonth();
@@ -16,8 +15,6 @@ function buildStatement(today: Date, closingDay: number, dueDay: number) {
   const lastDayOfMonth = (yy: number, mm: number) => new Date(Date.UTC(yy, mm + 1, 0)).getUTCDate();
   const clamp = (yy: number, mm: number, d: number) => Math.min(d, lastDayOfMonth(yy, mm));
 
-  // Closing date of the current cycle: if today already past this month's
-  // closing, the cycle closes next month; otherwise it closes this month.
   let closeY = y;
   let closeM = m;
   if (day > clamp(y, m, closingDay)) {
@@ -26,7 +23,6 @@ function buildStatement(today: Date, closingDay: number, dueDay: number) {
   }
   const closeDate = new Date(Date.UTC(closeY, closeM, clamp(closeY, closeM, closingDay)));
 
-  // Cycle start: day after the previous closing
   const prevCloseM0 = closeM - 1;
   const prevCloseY = prevCloseM0 < 0 ? closeY - 1 : closeY;
   const prevCloseM = (prevCloseM0 + 12) % 12;
@@ -34,7 +30,6 @@ function buildStatement(today: Date, closingDay: number, dueDay: number) {
   const start = new Date(prevClose);
   start.setUTCDate(prevClose.getUTCDate() + 1);
 
-  // Due date: next due_day on/after closeDate
   let dueY = closeY;
   let dueM = closeM;
   if (clamp(dueY, dueM, dueDay) < closeDate.getUTCDate()) {
@@ -67,30 +62,41 @@ export const getCreditCardStatements = createServerFn({ method: "POST" })
     const accounts = accRes.data ?? [];
     const today = todayUTCDate();
     const todayStr = ymd(today);
-    const usdBrl = await getLatestUsdBrlRate(supabase);
 
     const cards = accounts.map((a: any) => {
+      const currency = (a.currency as string) ?? "USD";
       const closing = a.closing_day ?? null;
       const due = a.due_day ?? null;
       const allCardTx = allTx.filter((t: any) => t.account_id === a.id);
+
+      // Cartão é mono-moeda: toda a conta opera numa moeda só, então tudo é
+      // calculado no valor NATIVO (amount) — exato, sem depender da cotação USD.
+      const nat = (t: any) => Number(t.amount ?? 0);
       const confirmedCardTx = allCardTx.filter((t: any) => !t.is_pending && t.date <= todayStr);
-      const cardTx = allCardTx.filter((t: any) => !t.is_transfer && !t.is_pending);
-      // total owed today (includes payments / transfers reducing the debt)
-      const balance = initialBalanceUsd(a, usdBrl) + confirmedCardTx.reduce((s: number, t: any) => s + Number(t.amount_usd || 0), 0);
+      const purchases = allCardTx.filter((t: any) => !t.is_transfer && !t.is_pending);
+
+      // Saldo do cartão = saldo inicial + tudo (compras negativas, pagamentos positivos).
+      const balance = Number(a.initial_balance || 0) + confirmedCardTx.reduce((s: number, t: any) => s + nat(t), 0);
       const totalOwed = Math.max(0, -balance);
+
+      // Último pagamento: lançamento confirmado mais recente com valor positivo
+      // (pagamento ou estorno abatendo a fatura).
+      const lastPaymentTx = confirmedCardTx
+        .filter((t: any) => nat(t) > 0)
+        .sort((x: any, y: any) => (y.date as string).localeCompare(x.date as string))[0];
+      const lastPayment = lastPaymentTx ? { date: lastPaymentTx.date as string, amount: nat(lastPaymentTx) } : null;
+
+      const limit = a.credit_limit_usd != null ? Number(a.credit_limit_usd) : null;
 
       if (!closing || !due) {
         return {
-          account: a,
-          configured: false,
-          statements: [] as any[],
-          currentTotalUsd: 0,
-          totalOwedUsd: totalOwed,
-          openTransactions: cardTx,
+          account: a, configured: false, currency,
+          statements: [] as any[], currentTotal: 0, closedUnpaid: 0,
+          totalOwed, limit, utilization: limit ? totalOwed / limit : null,
+          lastPayment, openTransactions: purchases,
         };
       }
 
-      // Build 3 statements: previous, current (open), next
       const current = buildStatement(today, closing, due);
       const previous = {
         start: shiftMonths(current.start, -1),
@@ -106,39 +112,33 @@ export const getCreditCardStatements = createServerFn({ method: "POST" })
       const buildSt = (s: typeof current, label: string) => {
         const startStr = ymd(s.start);
         const closeStr = ymd(s.close);
-        const txs = cardTx.filter((t: any) => t.date >= startStr && t.date <= closeStr);
-        // Despesa é negativa e estorno positivo abate a fatura (não usar abs)
-        const totalUsd = Math.max(0, -txs.reduce((sum: number, t: any) => sum + (Number(t.amount_usd) || 0), 0));
-        return {
-          label,
-          start: startStr,
-          close: closeStr,
-          due: ymd(s.due),
-          transactions: txs,
-          totalUsd,
-          count: txs.length,
-        };
+        const txs = purchases.filter((t: any) => t.date >= startStr && t.date <= closeStr);
+        // Despesa é negativa, estorno positivo abate; clampa em zero.
+        const spend = Math.max(0, -txs.reduce((sum: number, t: any) => sum + nat(t), 0));
+        return { label, start: startStr, close: closeStr, due: ymd(s.due), transactions: txs, total: spend, count: txs.length };
       };
 
       const stPrev = buildSt(previous, "Fechada (a pagar)");
       const stCur = buildSt(current, "Em aberto");
       const stNext = buildSt(next, "Próxima");
-      // Closed-unpaid = total owed minus what's already in the open cycle.
-      // This captures legacy initial_balance and any prior closed cycles.
-      const closedUnpaidUsd = Math.max(0, totalOwed - stCur.totalUsd);
-      stPrev.totalUsd = Math.max(stPrev.totalUsd, closedUnpaidUsd);
 
-      const hasClosed = closedUnpaidUsd > 0.005 && stPrev.due >= todayStr;
-      const utilization = a.credit_limit_usd ? (stCur.totalUsd + closedUnpaidUsd) / Number(a.credit_limit_usd) : null;
+      // A fatura fechada "a pagar" é o total devido MENOS o que já está no ciclo
+      // aberto — não a soma bruta do ciclo passado (que ignora pagamentos feitos).
+      const closedUnpaid = Math.max(0, totalOwed - stCur.total);
+      stPrev.total = closedUnpaid;
+
+      const hasClosed = closedUnpaid > 0.005 && stPrev.due >= todayStr;
+      const utilization = limit ? totalOwed / limit : null;
 
       return {
-        account: a,
-        configured: true,
+        account: a, configured: true, currency,
         statements: [stPrev, stCur, stNext],
-        currentTotalUsd: stCur.totalUsd,
-        closedUnpaidUsd,
-        totalOwedUsd: totalOwed,
+        currentTotal: stCur.total,
+        closedUnpaid,
+        totalOwed,
+        limit,
         utilization,
+        lastPayment,
         nextDue: hasClosed ? stPrev.due : stCur.due,
         nextDueIsClosed: hasClosed,
         openCycle: { start: stCur.start, close: stCur.close, due: stCur.due },
