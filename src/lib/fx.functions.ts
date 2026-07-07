@@ -1,6 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
 // Fetches USD->BRL rate for a given date. Caches in exchange_rates table.
 // Source: Frankfurter (ECB) — free, no key.
@@ -14,10 +14,12 @@ async function fetchRate(date: string): Promise<number> {
 }
 
 export const getUsdBrlRate = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
   .inputValidator((d) => z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }).parse(d))
-  .handler(async ({ data }) => {
+  .handler(async ({ data, context }) => {
+    const sb = context.supabase;
     // Frankfurter returns latest available business day if weekend
-    const { data: cached } = await supabaseAdmin
+    const { data: cached } = await sb
       .from("exchange_rates")
       .select("rate")
       .eq("date", data.date)
@@ -28,13 +30,13 @@ export const getUsdBrlRate = createServerFn({ method: "POST" })
 
     try {
       const rate = await fetchRate(data.date);
-      await supabaseAdmin.from("exchange_rates").upsert({
+      await sb.from("exchange_rates").upsert({
         date: data.date, base: "USD", quote: "BRL", rate,
       });
       return { rate, cached: false };
     } catch (e) {
       // fallback: latest cached
-      const { data: latest } = await supabaseAdmin
+      const { data: latest } = await sb
         .from("exchange_rates")
         .select("rate")
         .eq("base", "USD").eq("quote", "BRL")
@@ -46,9 +48,12 @@ export const getUsdBrlRate = createServerFn({ method: "POST" })
     }
   });
 
-export const getLatestUsdBrl = createServerFn({ method: "GET" }).handler(async () => {
+export const getLatestUsdBrl = createServerFn({ method: "GET" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+  const sb = context.supabase;
   const today = new Date().toISOString().slice(0, 10);
-  const { data: cached } = await supabaseAdmin
+  const { data: cached } = await sb
     .from("exchange_rates")
     .select("date, rate")
     .eq("base", "USD").eq("quote", "BRL")
@@ -64,7 +69,7 @@ export const getLatestUsdBrl = createServerFn({ method: "GET" }).handler(async (
     const res = await fetch(url);
     const json: { date?: string; rates?: { BRL?: number } } = await res.json();
     if (json.rates?.BRL && json.date) {
-      await supabaseAdmin.from("exchange_rates").upsert({
+      await sb.from("exchange_rates").upsert({
         date: json.date, base: "USD", quote: "BRL", rate: json.rates.BRL,
       });
       return { rate: json.rates.BRL, date: json.date };
