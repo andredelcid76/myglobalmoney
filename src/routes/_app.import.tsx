@@ -7,6 +7,8 @@ import { getUsdBrlRate } from "@/lib/fx.functions";
 import { applyRules } from "@/lib/rules.functions";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { NubankImport } from "@/components/import/NubankImport";
 
 export const Route = createFileRoute("/_app/import")({ component: ImportPage });
 
@@ -131,9 +133,19 @@ function ImportPage() {
     <div className="space-y-6 max-w-3xl">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Importar CSV</h1>
-        <p className="text-sm text-muted-foreground mt-1">Formato Monarch (Date, Merchant, Category, Account, Original Statement, Notes, Amount, Tags, Owner). Cotação USD/BRL é buscada automaticamente para contas em real.</p>
+        <p className="text-sm text-muted-foreground mt-1">Importe do Monarch (multi-conta) ou direto do extrato bruto do Nubank.</p>
       </div>
-      <div className="rounded-xl border border-border bg-card p-6">
+      <Tabs defaultValue="nubank" className="w-full">
+        <TabsList>
+          <TabsTrigger value="nubank">Nubank (extrato bruto)</TabsTrigger>
+          <TabsTrigger value="monarch">Monarch (multi-conta)</TabsTrigger>
+        </TabsList>
+        <TabsContent value="nubank" className="mt-4">
+          <NubankImport />
+        </TabsContent>
+        <TabsContent value="monarch" className="mt-4 space-y-6">
+          <div className="rounded-xl border border-border bg-card p-6">
+            <p className="text-sm text-muted-foreground mb-3">Formato Monarch (Date, Merchant, Category, Account, Original Statement, Notes, Amount, Tags, Owner). Cotação USD/BRL é buscada automaticamente para contas em real.</p>
         <input type="file" accept=".csv" onChange={onFile} className="text-sm" />
         {rows.length > 0 && <div className="mt-4 text-sm text-muted-foreground">{rows.length} linhas detectadas.</div>}
       </div>
@@ -155,6 +167,8 @@ function ImportPage() {
           </Button>
         </div>
       )}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
