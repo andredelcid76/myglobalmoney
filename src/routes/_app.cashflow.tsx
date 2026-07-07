@@ -10,8 +10,8 @@ import { ArrowDownCircle, ArrowUpCircle } from "lucide-react";
 export const Route = createFileRoute("/_app/cashflow")({ component: CashflowPage });
 
 function CashflowPage() {
-  const [granularity, setGranularity] = useState<"weekly" | "monthly" | "quarterly">("monthly");
-  const periodsByGran: Record<string, number> = { weekly: 12, monthly: 12, quarterly: 4 };
+  const [granularity, setGranularity] = useState<"daily" | "weekly" | "monthly" | "quarterly" | "yearly">("monthly");
+  const periodsByGran: Record<string, number> = { daily: 60, weekly: 12, monthly: 12, quarterly: 4, yearly: 5 };
   const periods = periodsByGran[granularity];
   const fetchCf = useServerFn(getCashflow);
   const { data } = useQuery({
@@ -53,10 +53,10 @@ function CashflowView({ data, granularity, setGranularity }: any) {
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="inline-flex rounded-md border border-border overflow-hidden text-sm">
-          {(["weekly", "monthly", "quarterly"] as const).map((g) => (
+          {(["daily", "weekly", "monthly", "quarterly", "yearly"] as const).map((g) => (
             <button key={g} onClick={() => setGranularity(g)}
               className={`px-3 py-1.5 ${granularity === g ? "bg-primary text-primary-foreground" : "bg-card hover:bg-secondary/40"}`}>
-              {g === "weekly" ? "Semanal" : g === "monthly" ? "Mensal" : "Trimestral"}
+              {g === "daily" ? "Diário" : g === "weekly" ? "Semanal" : g === "monthly" ? "Mensal" : g === "quarterly" ? "Trimestral" : "Anual"}
             </button>
           ))}
         </div>
