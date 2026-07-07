@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { fetchAllPages } from "@/lib/paginated-query";
+import { todayUTCDate } from "@/lib/dates";
 
 export const listRecurrences = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -109,7 +110,7 @@ export const detectRecurrences = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     // Pull last 9 months of non-transfer transactions
-    const since = new Date();
+    const since = todayUTCDate();
     since.setUTCMonth(since.getUTCMonth() - 9);
     const sinceStr = since.toISOString().slice(0, 10);
     const txs = await fetchAllPages<any>(() => context.supabase

@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { fetchAllPages } from "@/lib/paginated-query";
+import { todayUTCDate, advanceByCadence } from "@/lib/dates";
 
 type Granularity = "weekly" | "monthly" | "quarterly";
 
@@ -12,15 +13,6 @@ function startOfWeekUTC(d: Date) {
   return dd;
 }
 function addDays(d: Date, n: number) { const x = new Date(d); x.setUTCDate(x.getUTCDate() + n); return x; }
-function advanceByCadence(d: Date, c: string): Date {
-  const dd = new Date(d.getTime());
-  if (c === "weekly") dd.setUTCDate(dd.getUTCDate() + 7);
-  else if (c === "biweekly") dd.setUTCDate(dd.getUTCDate() + 14);
-  else if (c === "monthly") dd.setUTCMonth(dd.getUTCMonth() + 1);
-  else if (c === "quarterly") dd.setUTCMonth(dd.getUTCMonth() + 3);
-  else if (c === "yearly") dd.setUTCFullYear(dd.getUTCFullYear() + 1);
-  return dd;
-}
 function fmt(d: Date) { return d.toISOString().slice(0, 10); }
 
 /**
@@ -39,8 +31,8 @@ export const getCashflowPro = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const sb = context.supabase;
     const userId = context.userId;
-    const now = new Date();
-    const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const now = todayUTCDate();
+    const today = now;
     const horizonEnd = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + data.horizonMonths + 1, 0));
 
     // Build buckets
@@ -156,7 +148,8 @@ export const getCashflowPro = createServerFn({ method: "POST" })
       const cad = r.cadence as string;
       const endDate = r.end_date ? new Date((r.end_date as string) + "T00:00:00Z") : null;
       let d = new Date((r.next_date as string) + "T00:00:00Z");
-      while (d < buckets[0].start) d = advanceByCadence(d, cad);
+      const anchor = d.getUTCDate();
+      while (d < buckets[0].start) d = advanceByCadence(d, cad, anchor);
       let guard = 0;
       while (d <= horizonStop && guard < 500) {
         if (endDate && d > endDate) break;
@@ -173,7 +166,7 @@ export const getCashflowPro = createServerFn({ method: "POST" })
             source: "recurrence", label: r.name,
           });
         }
-        d = advanceByCadence(d, cad);
+        d = advanceByCadence(d, cad, anchor);
         guard++;
       }
     }

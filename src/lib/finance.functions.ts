@@ -3,13 +3,14 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { fetchAllPages } from "@/lib/paginated-query";
 import { getLatestUsdBrlRate, initialBalanceUsd } from "@/lib/fx-helpers";
+import { todayStr, todayUTCDate, advanceByCadence } from "@/lib/dates";
 
 export const getOverview = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d) => z.object({ monthStart: z.string(), monthEnd: z.string() }).parse(d))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayStr();
     const [accountsRes, txMonth, catsRes, allTx] = await Promise.all([
       supabase.from("accounts").select("*").eq("user_id", userId).eq("is_archived", false),
       fetchAllPages<any>(() => supabase.from("transactions").select("*").eq("user_id", userId).eq("is_transfer", false).gte("date", data.monthStart).lte("date", data.monthEnd)),
@@ -109,7 +110,7 @@ export const createTransfer = createServerFn({ method: "POST" })
     // Resolve USD/BRL rate (rate = BRL per USD). For future/missing dates, fall back to latest.
     let usdBrl = 1;
     if (fromCur !== toCur || fromCur === "BRL" || toCur === "BRL") {
-      const today = new Date().toISOString().slice(0, 10);
+      const today = todayStr();
       const lookup = data.date > today ? today : data.date;
       const { data: r1 } = await context.supabase
         .from("exchange_rates").select("rate,date")
@@ -248,7 +249,7 @@ export const setAccountBalanceToday = createServerFn({ method: "POST" })
   }).parse(d))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    const today = data.date ?? new Date().toISOString().slice(0, 10);
+    const today = data.date ?? todayStr();
     const { data: acc, error: accErr } = await supabase.from("accounts")
       .select("id,currency,initial_balance,name").eq("id", data.account_id).eq("user_id", userId).maybeSingle();
     if (accErr || !acc) throw new Error("Conta não encontrada");
@@ -355,7 +356,7 @@ export const listAccounts = createServerFn({ method: "POST" })
   .handler(async ({ context }) => {
     const { data, error } = await context.supabase.from("accounts").select("*").eq("user_id", context.userId).order("created_at");
     if (error) throw new Error(error.message);
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayStr();
     const tx = await fetchAllPages<any>(() => context.supabase.from("transactions")
       .select("account_id, amount, is_pending").eq("user_id", context.userId).lte("date", today));
     const sumByAcc = new Map<string, number>();
@@ -488,7 +489,7 @@ export const getBudgetSuggestions = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d) => z.object({ months: z.number().int().min(1).max(24).default(6) }).parse(d))
   .handler(async ({ data, context }) => {
-    const now = new Date();
+    const now = todayUTCDate();
     const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - data.months, 1));
     const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0));
     const [txRows, catsRes] = await Promise.all([
@@ -636,7 +637,7 @@ export const getProjections = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d) => z.object({ months: z.number().min(1).max(24).default(6) }).parse(d))
   .handler(async ({ data, context }) => {
-    const now = new Date();
+    const now = todayUTCDate();
     const startHist = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 5, 1));
     const startStr = startHist.toISOString().slice(0, 10);
     const [tx, accountsRes, recsRes, budgetsRes] = await Promise.all([
@@ -739,15 +740,6 @@ function addDaysUTC(d: Date, n: number) {
 function cadenceDays(c: string): number {
   return ({ weekly: 7, biweekly: 14, monthly: 30, quarterly: 91, yearly: 365 } as Record<string, number>)[c] ?? 30;
 }
-function advanceByCadence(d: Date, c: string): Date {
-  const dd = new Date(d.getTime());
-  if (c === "weekly") dd.setUTCDate(dd.getUTCDate() + 7);
-  else if (c === "biweekly") dd.setUTCDate(dd.getUTCDate() + 14);
-  else if (c === "monthly") dd.setUTCMonth(dd.getUTCMonth() + 1);
-  else if (c === "quarterly") dd.setUTCMonth(dd.getUTCMonth() + 3);
-  else if (c === "yearly") dd.setUTCFullYear(dd.getUTCFullYear() + 1);
-  return dd;
-}
 
 export const getCashflow = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
@@ -757,8 +749,8 @@ export const getCashflow = createServerFn({ method: "POST" })
     includeProjections: z.boolean().default(true),
   }).parse(d))
   .handler(async ({ data, context }) => {
-    const now = new Date();
-    const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+    const now = todayUTCDate();
+    const today = now;
 
     // Build period buckets starting from current period
     const buckets: { start: Date; end: Date; label: string; days: number }[] = [];
@@ -844,8 +836,9 @@ export const getCashflow = createServerFn({ method: "POST" })
     for (const r of recs) {
       const cad = r.cadence as string;
       let d = new Date((r.next_date as string) + "T00:00:00Z");
+      const anchor = d.getUTCDate();
       // Roll forward to first bucket start if behind
-      while (d < buckets[0].start) d = advanceByCadence(d, cad);
+      while (d < buckets[0].start) d = advanceByCadence(d, cad, anchor);
       // Safety cap
       let guard = 0;
       while (d <= horizonEnd && guard < 500) {
@@ -855,7 +848,7 @@ export const getCashflow = createServerFn({ method: "POST" })
           isIncome: !!r.is_income,
           name: r.name as string,
         });
-        d = advanceByCadence(d, cad);
+        d = advanceByCadence(d, cad, anchor);
         guard++;
       }
     }

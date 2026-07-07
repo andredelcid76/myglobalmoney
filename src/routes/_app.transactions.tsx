@@ -5,6 +5,7 @@ import { listTransactions, updateTxCategory, bulkUpdateTxCategory, bulkUpdateTxA
 import { splitTransaction, unsplitTransaction, updateTxTags, listAllTags } from "@/lib/splits.functions";
 import { getLedgerView } from "@/lib/ledger.functions";
 import { formatCurrency, formatDate } from "@/lib/format";
+import { todayStr, todayUTCDate } from "@/lib/dates";
 import { useMemo, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { MoneyInput } from "@/components/ui/money-input";
@@ -424,10 +425,7 @@ function bucketLabelFor(dateStr: string, gran: Granularity): { key: string; labe
 }
 
 function TxLedgerView() {
-  const [anchor, setAnchor] = useState<Date>(() => {
-    const t = new Date();
-    return new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate()));
-  });
+  const [anchor, setAnchor] = useState<Date>(() => todayUTCDate());
   const [granularity, setGranularity] = useState<Granularity>("monthly");
   const [accountId, setAccountId] = useState<string>("");
   const [newTxOpen, setNewTxOpen] = useState(false);
@@ -484,10 +482,7 @@ function TxLedgerView() {
   });
 
   const step = (delta: number) => setAnchor((a) => stepAnchor(a, granularity, delta));
-  const goToday = () => {
-    const t = new Date();
-    setAnchor(new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate())));
-  };
+  const goToday = () => setAnchor(todayUTCDate());
   const navTitle =
     granularity === "daily" ? "Dia anterior / próximo"
     : granularity === "weekly" ? "Semana anterior / próxima"
@@ -747,7 +742,7 @@ function TxLedgerView() {
 function NewTransactionDialog({ accounts, categories, defaultAccountId, onClose }: {
   accounts: any[]; categories: any[]; defaultAccountId: string; onClose: () => void;
 }) {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayStr();
   const [date, setDate] = useState(today);
   const [merchant, setMerchant] = useState("");
   const [amount, setAmount] = useState("");

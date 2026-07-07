@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { fetchAllPages } from "@/lib/paginated-query";
 import { getLatestUsdBrlRate, initialBalanceUsd } from "@/lib/fx-helpers";
+import { todayUTCDate, advanceByCadence, retreatByCadence } from "@/lib/dates";
 
 type Granularity = "daily" | "weekly" | "monthly";
 
@@ -35,17 +36,6 @@ function bucketKey(dateStr: string, gran: Granularity): { key: string; start: st
   const s = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), 1));
   const e = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0));
   return { key: fmt(s).slice(0, 7), start: fmt(s), end: fmt(e), label: fmt(s).slice(0, 7) };
-}
-
-function advanceByCadence(d: Date, c: string): Date {
-  const dd = new Date(d.getTime());
-  if (c === "weekly") dd.setUTCDate(dd.getUTCDate() + 7);
-  else if (c === "biweekly") dd.setUTCDate(dd.getUTCDate() + 14);
-  else if (c === "monthly") dd.setUTCMonth(dd.getUTCMonth() + 1);
-  else if (c === "quarterly") dd.setUTCMonth(dd.getUTCMonth() + 3);
-  else if (c === "yearly") dd.setUTCFullYear(dd.getUTCFullYear() + 1);
-  else dd.setUTCMonth(dd.getUTCMonth() + 1);
-  return dd;
 }
 
 type Status = "confirmed" | "scheduled" | "pending" | "projected";
@@ -112,8 +102,8 @@ export const getLedgerView = createServerFn({ method: "POST" })
 
     const cats = (catsRes.data ?? []) as any[];
     const catMap = new Map(cats.map((c) => [c.id as string, c]));
-    const today = new Date();
-    const todayStr = fmt(new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate())));
+    const today = todayUTCDate();
+    const todayStr = fmt(today);
     const fromD = new Date(data.from + "T00:00:00Z");
     const toD = new Date(data.to + "T00:00:00Z");
 
@@ -172,26 +162,18 @@ export const getLedgerView = createServerFn({ method: "POST" })
         if (data.accountId && !accId) continue;
         // Compute occurrence dates
         let d = new Date((r.next_date as string) + "T00:00:00Z");
+        const anchor = d.getUTCDate();
         // Roll backward to catch overdue within window if any
         let guard = 0;
         while (d > fromD && guard < 60) {
-          const prev = (() => {
-            const x = new Date(d);
-            if (r.cadence === "weekly") x.setUTCDate(x.getUTCDate() - 7);
-            else if (r.cadence === "biweekly") x.setUTCDate(x.getUTCDate() - 14);
-            else if (r.cadence === "monthly") x.setUTCMonth(x.getUTCMonth() - 1);
-            else if (r.cadence === "quarterly") x.setUTCMonth(x.getUTCMonth() - 3);
-            else if (r.cadence === "yearly") x.setUTCFullYear(x.getUTCFullYear() - 1);
-            else x.setUTCMonth(x.getUTCMonth() - 1);
-            return x;
-          })();
+          const prev = retreatByCadence(d, r.cadence as string, anchor);
           if (prev < fromD) break;
           d = prev;
           guard++;
         }
         // Roll forward to first >= fromD
         guard = 0;
-        while (d < fromD && guard < 200) { d = advanceByCadence(d, r.cadence as string); guard++; }
+        while (d < fromD && guard < 200) { d = advanceByCadence(d, r.cadence as string, anchor); guard++; }
         // Emit while in window
         guard = 0;
         while (d <= toD && guard < 200) {
@@ -224,7 +206,7 @@ export const getLedgerView = createServerFn({ method: "POST" })
               source: "recurrence",
             });
           }
-          d = advanceByCadence(d, r.cadence as string);
+          d = advanceByCadence(d, r.cadence as string, anchor);
           guard++;
         }
       }

@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { fetchAllPages } from "@/lib/paginated-query";
+import { todayUTCDate } from "@/lib/dates";
 
 function endOfMonthStr(monthStart: string) {
   const d = new Date(monthStart + "T00:00:00Z");
@@ -85,7 +86,7 @@ export const getBudgetMonthlyPro = createServerFn({ method: "POST" })
     }
 
     // Pace: today's day-of-month / total days
-    const today = new Date();
+    const today = todayUTCDate();
     const monthStartD = new Date(data.month + "T00:00:00Z");
     const sameMonth = today.getUTCFullYear() === monthStartD.getUTCFullYear()
       && today.getUTCMonth() === monthStartD.getUTCMonth();

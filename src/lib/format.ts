@@ -37,7 +37,11 @@ export function endOfMonth(d = new Date()): string {
 }
 
 export function addMonths(dateStr: string, months: number): string {
+  // Clampa ao fim do mês para não sofrer overflow do JS (31/jan + 1 mês → 3/mar)
   const d = new Date(dateStr + "T00:00:00Z");
-  d.setUTCMonth(d.getUTCMonth() + months);
-  return d.toISOString().slice(0, 10);
+  const day = d.getUTCDate();
+  const base = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + months, 1));
+  const lastDay = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth() + 1, 0)).getUTCDate();
+  base.setUTCDate(Math.min(day, lastDay));
+  return base.toISOString().slice(0, 10);
 }

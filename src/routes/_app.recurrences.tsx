@@ -8,6 +8,7 @@ import {
 } from "@/lib/recurrences.functions";
 import { getLatestUsdBrl } from "@/lib/fx.functions";
 import { formatCurrency } from "@/lib/format";
+import { todayStr } from "@/lib/dates";
 import { useState, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,7 +36,7 @@ type Form = {
   notes: string;
 };
 
-const today = () => new Date().toISOString().slice(0, 10);
+const today = () => todayStr();
 const empty: Form = {
   name: "", merchant_pattern: "", account_id: null, category_id: null,
   amount_usd: 0, amount: null, currency: "USD",

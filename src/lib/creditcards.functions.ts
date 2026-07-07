@@ -2,17 +2,18 @@ import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { fetchAllPages } from "@/lib/paginated-query";
 import { getLatestUsdBrlRate, initialBalanceUsd } from "@/lib/fx-helpers";
+import { todayUTCDate, addMonthsClamped } from "@/lib/dates";
 
 // Compute the statement (fatura) period containing `today` for a card with
 // the given closing day. The period runs from the day AFTER the previous
 // closing to the closing date itself. Due date falls on the next due_day
 // after closing.
 function buildStatement(today: Date, closingDay: number, dueDay: number) {
-  const y = today.getFullYear();
-  const m = today.getMonth();
-  const day = today.getDate();
+  const y = today.getUTCFullYear();
+  const m = today.getUTCMonth();
+  const day = today.getUTCDate();
 
-  const lastDayOfMonth = (yy: number, mm: number) => new Date(yy, mm + 1, 0).getDate();
+  const lastDayOfMonth = (yy: number, mm: number) => new Date(Date.UTC(yy, mm + 1, 0)).getUTCDate();
   const clamp = (yy: number, mm: number, d: number) => Math.min(d, lastDayOfMonth(yy, mm));
 
   // Closing date of the current cycle: if today already past this month's
@@ -23,34 +24,34 @@ function buildStatement(today: Date, closingDay: number, dueDay: number) {
     closeM = m + 1;
     if (closeM > 11) { closeM = 0; closeY = y + 1; }
   }
-  const closeDate = new Date(closeY, closeM, clamp(closeY, closeM, closingDay));
+  const closeDate = new Date(Date.UTC(closeY, closeM, clamp(closeY, closeM, closingDay)));
 
   // Cycle start: day after the previous closing
   const prevCloseM0 = closeM - 1;
   const prevCloseY = prevCloseM0 < 0 ? closeY - 1 : closeY;
   const prevCloseM = (prevCloseM0 + 12) % 12;
-  const prevClose = new Date(prevCloseY, prevCloseM, clamp(prevCloseY, prevCloseM, closingDay));
+  const prevClose = new Date(Date.UTC(prevCloseY, prevCloseM, clamp(prevCloseY, prevCloseM, closingDay)));
   const start = new Date(prevClose);
-  start.setDate(prevClose.getDate() + 1);
+  start.setUTCDate(prevClose.getUTCDate() + 1);
 
   // Due date: next due_day on/after closeDate
   let dueY = closeY;
   let dueM = closeM;
-  if (clamp(dueY, dueM, dueDay) < closeDate.getDate()) {
+  if (clamp(dueY, dueM, dueDay) < closeDate.getUTCDate()) {
     dueM += 1;
     if (dueM > 11) { dueM = 0; dueY += 1; }
   }
-  const dueDate = new Date(dueY, dueM, clamp(dueY, dueM, dueDay));
+  const dueDate = new Date(Date.UTC(dueY, dueM, clamp(dueY, dueM, dueDay)));
 
   return { start, close: closeDate, due: dueDate };
 }
 
 function ymd(d: Date) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  return d.toISOString().slice(0, 10);
 }
 
 function shiftMonths(d: Date, months: number) {
-  return new Date(d.getFullYear(), d.getMonth() + months, d.getDate());
+  return addMonthsClamped(d, months);
 }
 
 export const getCreditCardStatements = createServerFn({ method: "POST" })
@@ -64,7 +65,7 @@ export const getCreditCardStatements = createServerFn({ method: "POST" })
     if (accRes.error) throw new Error(accRes.error.message);
 
     const accounts = accRes.data ?? [];
-    const today = new Date();
+    const today = todayUTCDate();
     const todayStr = ymd(today);
     const usdBrl = await getLatestUsdBrlRate(supabase);
 

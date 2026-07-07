@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { listAccounts, upsertAccount, setAccountBalanceToday } from "@/lib/finance.functions";
 import { formatCurrency } from "@/lib/format";
+import { todayStr } from "@/lib/dates";
 import { useEffect, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -142,7 +143,7 @@ function AccountsPage() {
                   {(Number(adjust.target) - adjust.current >= 0 ? "+" : "")}
                   {formatCurrency(Number(adjust.target) - adjust.current, adjust.currency)}
                 </span>{" "}
-                em {new Date().toISOString().slice(0, 10)}.
+                em {todayStr()}.
               </div>
             )}
             <div className="flex justify-end gap-2 pt-2">

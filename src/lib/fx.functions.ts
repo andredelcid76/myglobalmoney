@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { todayStr } from "@/lib/dates";
 
 // Fetches USD->BRL rate for a given date. Caches in exchange_rates table.
 // Source: Frankfurter (ECB) — free, no key.
@@ -52,7 +53,7 @@ export const getLatestUsdBrl = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
   const sb = context.supabase;
-  const today = new Date().toISOString().slice(0, 10);
+  const today = todayStr();
   const { data: cached } = await sb
     .from("exchange_rates")
     .select("date, rate")
