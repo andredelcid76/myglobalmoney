@@ -242,8 +242,10 @@ export const setAccountBalanceToday = createServerFn({ method: "POST" })
       .eq("user_id", userId).eq("account_id", data.account_id)
       .eq("date", today).eq("merchant", "Ajuste de saldo");
     const { data: tx } = await supabase.from("transactions")
-      .select("amount").eq("user_id", userId).eq("account_id", data.account_id).lte("date", today);
-    const current = Number(acc.initial_balance) + (tx ?? []).reduce((s, t: any) => s + Number(t.amount ?? 0), 0);
+      .select("amount,is_pending").eq("user_id", userId).eq("account_id", data.account_id).lte("date", today);
+    const current = Number(acc.initial_balance) + (tx ?? [])
+      .filter((t: any) => !t.is_pending)
+      .reduce((s, t: any) => s + Number(t.amount ?? 0), 0);
     const delta = Number((data.target_balance - current).toFixed(2));
     if (Math.abs(delta) < 0.005) return { ok: true, delta: 0, current, target: data.target_balance };
     let usdBrl = 1;
