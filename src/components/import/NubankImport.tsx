@@ -265,7 +265,7 @@ export function NubankImport() {
       const fxCache = new Map<string, number>();
       for (const d of fxDates) {
         try { const { rate } = await fxFn({ data: { date: d } }); fxCache.set(d, rate); }
-        catch { fxCache.set(d, 5); }
+        catch { throw new Error(`Sem cotação USD/BRL para ${d} — importação cancelada, tente novamente mais tarde`); }
       }
 
       setPreview({ newTx, dups, iofNet, lastDate, totalUsdCache: fxCache });
@@ -288,7 +288,8 @@ export function NubankImport() {
     try {
       setProgress("Importando transações...");
       const rows = preview.newTx.map((t) => {
-        const rate = preview.totalUsdCache.get(t.date) ?? 5;
+        const rate = preview.totalUsdCache.get(t.date);
+        if (!rate) throw new Error(`Sem cotação USD/BRL para ${t.date} — gere o preview novamente`);
         return {
           date: t.date,
           merchant: t.merchant,
@@ -307,7 +308,8 @@ export function NubankImport() {
 
       // consolidated IOF
       if (Math.abs(preview.iofNet) > 0.5) {
-        const rate = preview.totalUsdCache.get(preview.lastDate) ?? 5;
+        const rate = preview.totalUsdCache.get(preview.lastDate);
+        if (!rate) throw new Error(`Sem cotação USD/BRL para ${preview.lastDate} — gere o preview novamente`);
         rows.push({
           date: preview.lastDate,
           merchant: "IOF — Imposto s/ Operações Financeiras",
@@ -336,8 +338,8 @@ export function NubankImport() {
 
   const totalBrl = preview ? preview.newTx.reduce((s, t) => s + t.amount, 0) + (Math.abs(preview.iofNet) > 0.5 ? preview.iofNet : 0) : 0;
   const totalUsd = preview ? preview.newTx.reduce((s, t) => {
-    const r = preview.totalUsdCache.get(t.date) ?? 5; return s + t.amount / r;
-  }, 0) + (Math.abs(preview.iofNet) > 0.5 ? preview.iofNet / (preview.totalUsdCache.get(preview.lastDate) ?? 5) : 0) : 0;
+    const r = preview.totalUsdCache.get(t.date); return r ? s + t.amount / r : s;
+  }, 0) + (Math.abs(preview.iofNet) > 0.5 && preview.totalUsdCache.get(preview.lastDate) ? preview.iofNet / preview.totalUsdCache.get(preview.lastDate)! : 0) : 0;
 
   return (
     <div className="space-y-6">

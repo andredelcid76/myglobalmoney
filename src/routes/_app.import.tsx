@@ -94,14 +94,19 @@ function ImportPage() {
         if (acc?.currency === "BRL") datesBrl.add(r.date);
       }
       for (const d of datesBrl) {
-        try { const { rate } = await fxFn({ data: { date: d } }); fxCache.set(d, rate); } catch { fxCache.set(d, 5); }
+        try { const { rate } = await fxFn({ data: { date: d } }); fxCache.set(d, rate); }
+        catch { throw new Error(`Sem cotação USD/BRL para ${d} — importação cancelada, tente novamente mais tarde`); }
       }
       const prepared = rows
         .filter((r) => mapping[r.account])
         .map((r) => {
           const acc = meta.accounts.find((a) => a.id === mapping[r.account])!;
           let amtUsd = r.amount; let rate: number | null = null;
-          if (acc.currency === "BRL") { rate = fxCache.get(r.date) ?? 5; amtUsd = r.amount / rate; }
+          if (acc.currency === "BRL") {
+            const cached = fxCache.get(r.date);
+            if (cached == null) throw new Error(`Sem cotação USD/BRL para ${r.date} — importação cancelada`);
+            rate = cached; amtUsd = r.amount / rate;
+          }
           return {
             date: r.date, merchant: r.merchant,
             original_statement: r.original_statement || null,

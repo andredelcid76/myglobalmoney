@@ -71,5 +71,5 @@ export const getLatestUsdBrl = createServerFn({ method: "GET" }).handler(async (
     }
   } catch {}
   if (cached) return { rate: Number(cached.rate), date: cached.date };
-  return { rate: 5.0, date: today }; // safe fallback
+  throw new Error("Cotação USD/BRL indisponível (sem cache e API de câmbio fora do ar) — tente novamente mais tarde");
 });
