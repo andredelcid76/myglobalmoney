@@ -31,7 +31,8 @@ export const getUsdBrlRate = createServerFn({ method: "POST" })
 
     try {
       const rate = await fetchRate(data.date);
-      await sb.from("exchange_rates").upsert({
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      await supabaseAdmin.from("exchange_rates").upsert({
         date: data.date, base: "USD", quote: "BRL", rate,
       });
       return { rate, cached: false };
@@ -70,7 +71,8 @@ export const getLatestUsdBrl = createServerFn({ method: "GET" })
     const res = await fetch(url);
     const json: { date?: string; rates?: { BRL?: number } } = await res.json();
     if (json.rates?.BRL && json.date) {
-      await sb.from("exchange_rates").upsert({
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      await supabaseAdmin.from("exchange_rates").upsert({
         date: json.date, base: "USD", quote: "BRL", rate: json.rates.BRL,
       });
       return { rate: json.rates.BRL, date: json.date };
