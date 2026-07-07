@@ -123,10 +123,15 @@ export const getCreditCardStatements = createServerFn({ method: "POST" })
       const stCur = buildSt(current, "Em aberto");
       const stNext = buildSt(next, "Próxima");
 
-      // A fatura fechada "a pagar" é o total devido MENOS o que já está no ciclo
-      // aberto — não a soma bruta do ciclo passado (que ignora pagamentos feitos).
-      const closedUnpaid = Math.max(0, totalOwed - stCur.total);
+      // Fatura fechada "a pagar" = total devido menos o ciclo aberto — mas SÓ
+      // enquanto o vencimento dela ainda não passou. Depois do vencimento assume-se
+      // que foi paga (o app não vê o pagamento se ele não foi importado); o que
+      // resta passa a ser atribuído ao ciclo em aberto.
+      const openTxSum = stCur.total;
+      const closedUnpaid = stPrev.due >= todayStr ? Math.max(0, totalOwed - openTxSum) : 0;
+      const openBalance = Math.max(0, totalOwed - closedUnpaid);
       stPrev.total = closedUnpaid;
+      stCur.total = openBalance;
 
       const hasClosed = closedUnpaid > 0.005 && stPrev.due >= todayStr;
       const utilization = limit ? totalOwed / limit : null;
